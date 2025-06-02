@@ -1,6 +1,6 @@
 package main
 
 func main() {
-	cli := CLI{}
-	cli.Run()
+	server := NewServer("8080")
+	server.Start()
 }

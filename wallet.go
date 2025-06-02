@@ -6,7 +6,9 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"log"
+	"math/big"
 
 	"golang.org/x/crypto/ripemd160"
 )
@@ -83,4 +85,34 @@ func newKeyPair() (ecdsa.PrivateKey, []byte) {
 	pubKey := append(private.PublicKey.X.Bytes(), private.PublicKey.Y.Bytes()...)
 
 	return *private, pubKey
+}
+
+// NewWalletFromPrivateKey creates a wallet from an existing private key
+func NewWalletFromPrivateKey(privateKeyHex string) (*Wallet, error) {
+	// Decode the private key from hex
+	privateKeyBytes, err := hex.DecodeString(privateKeyHex)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create big.Int from private key bytes
+	privateKeyInt := new(big.Int).SetBytes(privateKeyBytes)
+
+	// Create the private key structure
+	curve := elliptic.P256()
+	privateKey := new(ecdsa.PrivateKey)
+	privateKey.D = privateKeyInt
+	privateKey.Curve = curve
+
+	// Generate the public key
+	privateKey.PublicKey.X, privateKey.PublicKey.Y = curve.ScalarBaseMult(privateKeyInt.Bytes())
+
+	// Create the wallet
+	pubKey := append(privateKey.PublicKey.X.Bytes(), privateKey.PublicKey.Y.Bytes()...)
+	wallet := &Wallet{
+		PrivateKey: *privateKey,
+		PublicKey:  pubKey,
+	}
+
+	return wallet, nil
 }
