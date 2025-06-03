@@ -8,6 +8,25 @@ import (
 	"strings"
 )
 
+// enableCORS wraps an http.HandlerFunc and adds CORS headers to the response
+func enableCORS(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Set CORS headers
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		// Handle preflight requests
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// Call the original handler
+		handler(w, r)
+	}
+}
+
 type Server struct {
 	port string
 }
@@ -53,7 +72,7 @@ func (s *Server) Start() {
 	mux := http.NewServeMux()
 
 	// Create a new wallet
-	mux.HandleFunc("/wallet", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/wallet", enableCORS(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPost:
 			wallets, _ := NewWallets()
@@ -73,10 +92,10 @@ func (s *Server) Start() {
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
-	})
+	}))
 
 	// Import wallet
-	mux.HandleFunc("/wallet/import", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/wallet/import", enableCORS(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -112,10 +131,10 @@ func (s *Server) Start() {
 			Address:    address,
 			PrivateKey: req.PrivateKey,
 		})
-	})
+	}))
 
 	// Get balance
-	mux.HandleFunc("/wallet/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/wallet/", enableCORS(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -159,10 +178,10 @@ func (s *Server) Start() {
 			Address: address,
 			Balance: balance,
 		})
-	})
+	}))
 
 	// List all addresses
-	mux.HandleFunc("/wallet/addresses", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/wallet/addresses", enableCORS(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -176,10 +195,10 @@ func (s *Server) Start() {
 
 		addresses := wallets.GetAddresses()
 		json.NewEncoder(w).Encode(map[string][]string{"addresses": addresses})
-	})
+	}))
 
 	// Blockchain operations (create and view)
-	mux.HandleFunc("/blockchain", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/blockchain", enableCORS(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPost:
 			// Create blockchain
@@ -237,10 +256,10 @@ func (s *Server) Start() {
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
-	})
+	}))
 
 	// Send coins
-	mux.HandleFunc("/transaction", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/transaction", enableCORS(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -281,11 +300,18 @@ func (s *Server) Start() {
 		bc := NewBlockchain()
 		defer bc.db.Close()
 
+		// Get the genesis miner address (the one who created the blockchain)
+		minerAddress := bc.GetGenesisAddress()
+		if minerAddress == "" {
+			http.Error(w, "Could not determine miner address", http.StatusInternalServerError)
+			return
+		}
+
 		// Create the main transaction
 		tx := NewUTXOTransaction(fromAddress, req.ToAddress, req.Amount, bc)
 
-		// Create a mining reward transaction
-		minerReward := NewCoinbaseTX(fromAddress, "Mining reward")
+		// Create a mining reward transaction for the genesis miner
+		minerReward := NewCoinbaseTX(minerAddress, "Mining reward")
 
 		// Add both transactions to the block
 		bc.AddBlock([]*Transaction{tx, minerReward})
@@ -298,10 +324,13 @@ func (s *Server) Start() {
 					"to":     req.ToAddress,
 					"amount": req.Amount,
 				},
-				"mining_reward": 100,
+				"mining_reward": map[string]interface{}{
+					"amount": 100,
+					"to":     minerAddress,
+				},
 			},
 		})
-	})
+	}))
 
 	log.Printf("Server starting on port %s\n", s.port)
 	log.Fatal(http.ListenAndServe(":"+s.port, mux))

@@ -265,6 +265,36 @@ Work:
 	return accumulated, unspentOutputs
 }
 
+// GetGenesisAddress returns the address that created the blockchain
+func (bc *Blockchain) GetGenesisAddress() string {
+	bci := bc.Iterator()
+
+	// Iterate to the genesis block
+	var genesisBlock *Block
+	for {
+		block := bci.Next()
+		if len(block.PrevBlockHash) == 0 {
+			genesisBlock = block
+			break
+		}
+	}
+
+	// Get the coinbase transaction from genesis block
+	genesisTx := genesisBlock.Transactions[0]
+	if !genesisTx.IsCoinbase() {
+		return "" // This shouldn't happen in a properly initialized blockchain
+	}
+
+	// Get the recipient address from the first output
+	pubKeyHash := genesisTx.Vout[0].PubKeyHash
+	versionedPayload := append([]byte{version}, pubKeyHash...)
+	checksum := checksum(versionedPayload)
+	fullPayload := append(versionedPayload, checksum...)
+	address := string(Base58Encode(fullPayload))
+
+	return address
+}
+
 func dbExists() bool {
 	if _, err := os.Stat(dbFile); os.IsNotExist(err) {
 		return false
