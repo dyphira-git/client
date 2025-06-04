@@ -1,2 +1,4 @@
 blockchain.db
 wallet.dat
+
+.env

@@ -6,23 +6,30 @@ import (
 	pb "dyp_chain/proto"
 	"log"
 	"net"
+	"os"
 
+	"github.com/joho/godotenv"
 	"google.golang.org/grpc"
 )
 
 const port = ":50051"
 
 func main() {
-	// Initialize blockchain
-	bc := blockchain.NewBlockchain()
+	loadEnv()
 
-	// Start HTTP server in a goroutine
+	var bc *blockchain.Blockchain
+
+	if _, err := os.Stat("blockchain.db"); os.IsNotExist(err) {
+		bc = blockchain.CreateBlockchain(os.Getenv("GENESIS_ADDRESS"))
+	} else {
+		bc = blockchain.NewBlockchain()
+	}
+
 	go func() {
 		server := api.NewServer("8080", bc)
 		server.Start()
 	}()
 
-	// Create gRPC server
 	lis, err := net.Listen("tcp", port)
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
@@ -34,5 +41,12 @@ func main() {
 	log.Printf("Mining server listening at %v", lis.Addr())
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
+	}
+}
+
+func loadEnv() {
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
 	}
 }

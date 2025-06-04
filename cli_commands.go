@@ -97,6 +97,6 @@ func (cli *CLI) send(from, to string, amount int) {
 	defer bc.DB.Close()
 
 	tx := blockchain.NewUTXOTransaction(from, to, amount, bc)
-	bc.AddBlock(bc.GetLastBlock(), []*blockchain.Transaction{tx})
-	fmt.Println("Success!")
+	bc.AddTransaction(tx) // Add to mempool instead of directly creating a block
+	fmt.Println("Success! Transaction added to mempool.")
 }

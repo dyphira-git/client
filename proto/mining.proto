@@ -9,6 +9,8 @@ service MiningService {
   rpc MineBlock(MineBlockRequest) returns (MineBlockResponse) {}
   // Get current blockchain status
   rpc GetBlockchainStatus(BlockchainStatusRequest) returns (BlockchainStatusResponse) {}
+  // Get pending transactions
+  rpc GetPendingTransactions(PendingTransactionsRequest) returns (PendingTransactionsResponse) {}
 }
 
 // Request to mine a new block
@@ -23,6 +25,7 @@ message Transaction {
   string to = 2;
   int64 amount = 3;
   bytes signature = 4;
+  bytes transaction_id = 5;
 }
 
 // Response after mining a block
@@ -40,4 +43,12 @@ message BlockchainStatusResponse {
   int32 height = 1;
   string latest_block_hash = 2;
   int32 difficulty = 3;
+}
+
+// Request to get pending transactions
+message PendingTransactionsRequest {}
+
+// Response containing pending transactions
+message PendingTransactionsResponse {
+  repeated Transaction transactions = 1;
 } 

@@ -67,6 +67,12 @@ type ImportWalletResponse struct {
 	PrivateKey string `json:"private_key"`
 }
 
+// TransactionHistoryResponse represents the response structure for transaction history
+type TransactionHistoryResponse struct {
+	Address string                              `json:"address"`
+	History []blockchain.TransactionHistoryItem `json:"history"`
+}
+
 func NewServer(port string, bc *blockchain.Blockchain) *Server {
 	return &Server{port: port, bc: bc}
 }
@@ -297,39 +303,66 @@ func (s *Server) Start() {
 		// Get sender's address
 		fromAddress := string(wallet.GetAddress())
 
-		bc := blockchain.NewBlockchain()
-		defer bc.DB.Close()
-
-		// Get the genesis miner address (the one who created the blockchain)
-		minerAddress := bc.GetGenesisAddress()
-		if minerAddress == "" {
-			http.Error(w, "Could not determine miner address", http.StatusInternalServerError)
+		// Create the transaction
+		tx := blockchain.NewUTXOTransaction(fromAddress, req.ToAddress, req.Amount, s.bc)
+		if tx == nil {
+			http.Error(w, "Failed to create transaction: insufficient funds", http.StatusBadRequest)
 			return
 		}
 
-		// Create the main transaction
-		tx := blockchain.NewUTXOTransaction(fromAddress, req.ToAddress, req.Amount, bc)
-
-		// Create a mining reward transaction for the genesis miner
-		minerReward := blockchain.NewCoinbaseTx(minerAddress, "Mining reward")
-
-		// Add both transactions to the block
-		bc.AddBlock(bc.GetLastBlock(), []*blockchain.Transaction{tx, minerReward})
+		// Add transaction to mempool
+		s.bc.AddTransaction(tx)
 
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"message": "Transaction completed successfully",
+			"message": "Transaction added to mempool",
 			"details": map[string]interface{}{
 				"transaction": map[string]interface{}{
 					"from":   fromAddress,
 					"to":     req.ToAddress,
 					"amount": req.Amount,
 				},
-				"mining_reward": map[string]interface{}{
-					"amount": 100,
-					"to":     minerAddress,
-				},
 			},
 		})
+	}))
+
+	mux.HandleFunc("/transactions", enableCORS(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		transactions := s.bc.GetAllTransactions()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(transactions)
+	}))
+
+	// Transaction history
+	mux.HandleFunc("/transaction/history/", enableCORS(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Extract address from URL path
+		address := r.URL.Path[len("/transaction/history/"):]
+		if address == "" {
+			http.Error(w, "Address parameter is required", http.StatusBadRequest)
+			return
+		}
+
+		history, err := s.bc.GetTransactionHistory(address)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		response := TransactionHistoryResponse{
+			Address: address,
+			History: history,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
 	}))
 
 	log.Printf("Server starting on port %s\n", s.port)

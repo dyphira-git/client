@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"fmt"
+	"log"
 	"math"
 	"math/big"
 )
@@ -48,17 +49,22 @@ func (pow *ProofOfWork) Run() (int, []byte) {
 	var hash [32]byte
 	nonce := 0
 
+	log.Printf("Starting proof of work with target bits: %d", targetBits)
 	fmt.Printf("Mining a new block")
 	for nonce < maxNonce {
 		data := pow.prepareData(nonce)
 		hash = sha256.Sum256(data)
-		fmt.Printf("\r%x", hash)
 		hashInt.SetBytes(hash[:])
 
 		if hashInt.Cmp(pow.target) == -1 {
+			log.Printf("Found valid proof of work - Hash: %x, Nonce: %d", hash, nonce)
 			break
 		} else {
 			nonce++
+		}
+
+		if nonce%100000 == 0 {
+			fmt.Printf("\rMining... Current nonce: %d", nonce)
 		}
 	}
 	fmt.Print("\n\n")

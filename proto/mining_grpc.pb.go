@@ -19,8 +19,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	MiningService_MineBlock_FullMethodName           = "/mining.MiningService/MineBlock"
-	MiningService_GetBlockchainStatus_FullMethodName = "/mining.MiningService/GetBlockchainStatus"
+	MiningService_MineBlock_FullMethodName              = "/mining.MiningService/MineBlock"
+	MiningService_GetBlockchainStatus_FullMethodName    = "/mining.MiningService/GetBlockchainStatus"
+	MiningService_GetPendingTransactions_FullMethodName = "/mining.MiningService/GetPendingTransactions"
 )
 
 // MiningServiceClient is the client API for MiningService service.
@@ -33,6 +34,8 @@ type MiningServiceClient interface {
 	MineBlock(ctx context.Context, in *MineBlockRequest, opts ...grpc.CallOption) (*MineBlockResponse, error)
 	// Get current blockchain status
 	GetBlockchainStatus(ctx context.Context, in *BlockchainStatusRequest, opts ...grpc.CallOption) (*BlockchainStatusResponse, error)
+	// Get pending transactions
+	GetPendingTransactions(ctx context.Context, in *PendingTransactionsRequest, opts ...grpc.CallOption) (*PendingTransactionsResponse, error)
 }
 
 type miningServiceClient struct {
@@ -63,6 +66,16 @@ func (c *miningServiceClient) GetBlockchainStatus(ctx context.Context, in *Block
 	return out, nil
 }
 
+func (c *miningServiceClient) GetPendingTransactions(ctx context.Context, in *PendingTransactionsRequest, opts ...grpc.CallOption) (*PendingTransactionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PendingTransactionsResponse)
+	err := c.cc.Invoke(ctx, MiningService_GetPendingTransactions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MiningServiceServer is the server API for MiningService service.
 // All implementations must embed UnimplementedMiningServiceServer
 // for forward compatibility.
@@ -73,6 +86,8 @@ type MiningServiceServer interface {
 	MineBlock(context.Context, *MineBlockRequest) (*MineBlockResponse, error)
 	// Get current blockchain status
 	GetBlockchainStatus(context.Context, *BlockchainStatusRequest) (*BlockchainStatusResponse, error)
+	// Get pending transactions
+	GetPendingTransactions(context.Context, *PendingTransactionsRequest) (*PendingTransactionsResponse, error)
 	mustEmbedUnimplementedMiningServiceServer()
 }
 
@@ -88,6 +103,9 @@ func (UnimplementedMiningServiceServer) MineBlock(context.Context, *MineBlockReq
 }
 func (UnimplementedMiningServiceServer) GetBlockchainStatus(context.Context, *BlockchainStatusRequest) (*BlockchainStatusResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetBlockchainStatus not implemented")
+}
+func (UnimplementedMiningServiceServer) GetPendingTransactions(context.Context, *PendingTransactionsRequest) (*PendingTransactionsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetPendingTransactions not implemented")
 }
 func (UnimplementedMiningServiceServer) mustEmbedUnimplementedMiningServiceServer() {}
 func (UnimplementedMiningServiceServer) testEmbeddedByValue()                       {}
@@ -146,6 +164,24 @@ func _MiningService_GetBlockchainStatus_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MiningService_GetPendingTransactions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PendingTransactionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MiningServiceServer).GetPendingTransactions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MiningService_GetPendingTransactions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MiningServiceServer).GetPendingTransactions(ctx, req.(*PendingTransactionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MiningService_ServiceDesc is the grpc.ServiceDesc for MiningService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -160,6 +196,10 @@ var MiningService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetBlockchainStatus",
 			Handler:    _MiningService_GetBlockchainStatus_Handler,
+		},
+		{
+			MethodName: "GetPendingTransactions",
+			Handler:    _MiningService_GetPendingTransactions_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

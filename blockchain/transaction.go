@@ -47,12 +47,19 @@ type TXOutput struct {
 
 // NewCoinbaseTx creates a new coinbase transaction
 func NewCoinbaseTx(to, data string) *Transaction {
-	return &Transaction{
+	txin := TXInput{[]byte{}, -1, nil, []byte(data)}
+	txout := NewTXOutput(int(MINING_REWARD), to)
+	tx := Transaction{
+		ID:        []byte{},
+		Vin:       []TXInput{txin},
+		Vout:      []TXOutput{*txout},
 		From:      "coinbase",
 		To:        to,
 		Amount:    MINING_REWARD,
 		Signature: []byte(data),
 	}
+	tx.ID = tx.Hash()
+	return &tx
 }
 
 // NewUTXOTransaction creates a new transaction
@@ -91,7 +98,15 @@ func NewUTXOTransaction(from, to string, amount int, bc *Blockchain) *Transactio
 		outputs = append(outputs, *NewTXOutput(acc-amount, from)) // a change
 	}
 
-	tx := Transaction{nil, inputs, outputs, "", "", 0, nil}
+	tx := Transaction{
+		ID:        nil,
+		Vin:       inputs,
+		Vout:      outputs,
+		From:      from,
+		To:        to,
+		Amount:    int64(amount),
+		Signature: nil,
+	}
 	tx.ID = tx.Hash()
 	bc.SignTransaction(&tx, wallet.PrivateKey)
 
@@ -104,9 +119,31 @@ func (tx *Transaction) Hash() []byte {
 
 	txCopy := *tx
 	txCopy.ID = []byte{}
+	txCopy.Signature = nil // Clear signature for hashing
 
-	hash = sha256.Sum256(txCopy.Serialize())
+	// Create a hash that includes all transaction fields
+	data := struct {
+		Vin    []TXInput
+		Vout   []TXOutput
+		From   string
+		To     string
+		Amount int64
+	}{
+		Vin:    txCopy.Vin,
+		Vout:   txCopy.Vout,
+		From:   txCopy.From,
+		To:     txCopy.To,
+		Amount: txCopy.Amount,
+	}
 
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	err := enc.Encode(data)
+	if err != nil {
+		panic(err)
+	}
+
+	hash = sha256.Sum256(buf.Bytes())
 	return hash[:]
 }
 

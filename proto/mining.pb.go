@@ -81,6 +81,7 @@ type Transaction struct {
 	To            string                 `protobuf:"bytes,2,opt,name=to,proto3" json:"to,omitempty"`
 	Amount        int64                  `protobuf:"varint,3,opt,name=amount,proto3" json:"amount,omitempty"`
 	Signature     []byte                 `protobuf:"bytes,4,opt,name=signature,proto3" json:"signature,omitempty"`
+	TransactionId []byte                 `protobuf:"bytes,5,opt,name=transaction_id,json=transactionId,proto3" json:"transaction_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -139,6 +140,13 @@ func (x *Transaction) GetAmount() int64 {
 func (x *Transaction) GetSignature() []byte {
 	if x != nil {
 		return x.Signature
+	}
+	return nil
+}
+
+func (x *Transaction) GetTransactionId() []byte {
+	if x != nil {
+		return x.TransactionId
 	}
 	return nil
 }
@@ -302,6 +310,88 @@ func (x *BlockchainStatusResponse) GetDifficulty() int32 {
 	return 0
 }
 
+// Request to get pending transactions
+type PendingTransactionsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PendingTransactionsRequest) Reset() {
+	*x = PendingTransactionsRequest{}
+	mi := &file_proto_mining_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PendingTransactionsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PendingTransactionsRequest) ProtoMessage() {}
+
+func (x *PendingTransactionsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_mining_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PendingTransactionsRequest.ProtoReflect.Descriptor instead.
+func (*PendingTransactionsRequest) Descriptor() ([]byte, []int) {
+	return file_proto_mining_proto_rawDescGZIP(), []int{5}
+}
+
+// Response containing pending transactions
+type PendingTransactionsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Transactions  []*Transaction         `protobuf:"bytes,1,rep,name=transactions,proto3" json:"transactions,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PendingTransactionsResponse) Reset() {
+	*x = PendingTransactionsResponse{}
+	mi := &file_proto_mining_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PendingTransactionsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PendingTransactionsResponse) ProtoMessage() {}
+
+func (x *PendingTransactionsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_mining_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PendingTransactionsResponse.ProtoReflect.Descriptor instead.
+func (*PendingTransactionsResponse) Descriptor() ([]byte, []int) {
+	return file_proto_mining_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *PendingTransactionsResponse) GetTransactions() []*Transaction {
+	if x != nil {
+		return x.Transactions
+	}
+	return nil
+}
+
 var File_proto_mining_proto protoreflect.FileDescriptor
 
 const file_proto_mining_proto_rawDesc = "" +
@@ -309,12 +399,13 @@ const file_proto_mining_proto_rawDesc = "" +
 	"\x12proto/mining.proto\x12\x06mining\"p\n" +
 	"\x10MineBlockRequest\x127\n" +
 	"\ftransactions\x18\x01 \x03(\v2\x13.mining.TransactionR\ftransactions\x12#\n" +
-	"\rminer_address\x18\x02 \x01(\tR\fminerAddress\"g\n" +
+	"\rminer_address\x18\x02 \x01(\tR\fminerAddress\"\x8e\x01\n" +
 	"\vTransaction\x12\x12\n" +
 	"\x04from\x18\x01 \x01(\tR\x04from\x12\x0e\n" +
 	"\x02to\x18\x02 \x01(\tR\x02to\x12\x16\n" +
 	"\x06amount\x18\x03 \x01(\x03R\x06amount\x12\x1c\n" +
-	"\tsignature\x18\x04 \x01(\fR\tsignature\"q\n" +
+	"\tsignature\x18\x04 \x01(\fR\tsignature\x12%\n" +
+	"\x0etransaction_id\x18\x05 \x01(\fR\rtransactionId\"q\n" +
 	"\x11MineBlockResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x1d\n" +
 	"\n" +
@@ -326,10 +417,14 @@ const file_proto_mining_proto_rawDesc = "" +
 	"\x11latest_block_hash\x18\x02 \x01(\tR\x0flatestBlockHash\x12\x1e\n" +
 	"\n" +
 	"difficulty\x18\x03 \x01(\x05R\n" +
-	"difficulty2\xaf\x01\n" +
+	"difficulty\"\x1c\n" +
+	"\x1aPendingTransactionsRequest\"V\n" +
+	"\x1bPendingTransactionsResponse\x127\n" +
+	"\ftransactions\x18\x01 \x03(\v2\x13.mining.TransactionR\ftransactions2\x94\x02\n" +
 	"\rMiningService\x12B\n" +
 	"\tMineBlock\x12\x18.mining.MineBlockRequest\x1a\x19.mining.MineBlockResponse\"\x00\x12Z\n" +
-	"\x13GetBlockchainStatus\x12\x1f.mining.BlockchainStatusRequest\x1a .mining.BlockchainStatusResponse\"\x00B\x11Z\x0fdyp_chain/protob\x06proto3"
+	"\x13GetBlockchainStatus\x12\x1f.mining.BlockchainStatusRequest\x1a .mining.BlockchainStatusResponse\"\x00\x12c\n" +
+	"\x16GetPendingTransactions\x12\".mining.PendingTransactionsRequest\x1a#.mining.PendingTransactionsResponse\"\x00B\x11Z\x0fdyp_chain/protob\x06proto3"
 
 var (
 	file_proto_mining_proto_rawDescOnce sync.Once
@@ -343,25 +438,30 @@ func file_proto_mining_proto_rawDescGZIP() []byte {
 	return file_proto_mining_proto_rawDescData
 }
 
-var file_proto_mining_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_proto_mining_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_proto_mining_proto_goTypes = []any{
-	(*MineBlockRequest)(nil),         // 0: mining.MineBlockRequest
-	(*Transaction)(nil),              // 1: mining.Transaction
-	(*MineBlockResponse)(nil),        // 2: mining.MineBlockResponse
-	(*BlockchainStatusRequest)(nil),  // 3: mining.BlockchainStatusRequest
-	(*BlockchainStatusResponse)(nil), // 4: mining.BlockchainStatusResponse
+	(*MineBlockRequest)(nil),            // 0: mining.MineBlockRequest
+	(*Transaction)(nil),                 // 1: mining.Transaction
+	(*MineBlockResponse)(nil),           // 2: mining.MineBlockResponse
+	(*BlockchainStatusRequest)(nil),     // 3: mining.BlockchainStatusRequest
+	(*BlockchainStatusResponse)(nil),    // 4: mining.BlockchainStatusResponse
+	(*PendingTransactionsRequest)(nil),  // 5: mining.PendingTransactionsRequest
+	(*PendingTransactionsResponse)(nil), // 6: mining.PendingTransactionsResponse
 }
 var file_proto_mining_proto_depIdxs = []int32{
 	1, // 0: mining.MineBlockRequest.transactions:type_name -> mining.Transaction
-	0, // 1: mining.MiningService.MineBlock:input_type -> mining.MineBlockRequest
-	3, // 2: mining.MiningService.GetBlockchainStatus:input_type -> mining.BlockchainStatusRequest
-	2, // 3: mining.MiningService.MineBlock:output_type -> mining.MineBlockResponse
-	4, // 4: mining.MiningService.GetBlockchainStatus:output_type -> mining.BlockchainStatusResponse
-	3, // [3:5] is the sub-list for method output_type
-	1, // [1:3] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	1, // 1: mining.PendingTransactionsResponse.transactions:type_name -> mining.Transaction
+	0, // 2: mining.MiningService.MineBlock:input_type -> mining.MineBlockRequest
+	3, // 3: mining.MiningService.GetBlockchainStatus:input_type -> mining.BlockchainStatusRequest
+	5, // 4: mining.MiningService.GetPendingTransactions:input_type -> mining.PendingTransactionsRequest
+	2, // 5: mining.MiningService.MineBlock:output_type -> mining.MineBlockResponse
+	4, // 6: mining.MiningService.GetBlockchainStatus:output_type -> mining.BlockchainStatusResponse
+	6, // 7: mining.MiningService.GetPendingTransactions:output_type -> mining.PendingTransactionsResponse
+	5, // [5:8] is the sub-list for method output_type
+	2, // [2:5] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_proto_mining_proto_init() }
@@ -375,7 +475,7 @@ func file_proto_mining_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_mining_proto_rawDesc), len(file_proto_mining_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   5,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

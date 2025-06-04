@@ -133,6 +133,16 @@ func NewBlockchain() *Blockchain {
 
 // AddBlock adds a mined block to the blockchain
 func (bc *Blockchain) AddBlock(block *Block, transactions []*Transaction) error {
+	log.Printf("Attempting to add block to chain - Height: %d, Hash: %x", block.Height, block.Hash)
+	log.Printf("Block contains %d transactions:", len(block.Transactions))
+	for i, tx := range block.Transactions {
+		log.Printf("  Transaction %d:", i+1)
+		log.Printf("    - ID: %x", tx.ID)
+		log.Printf("    - From: %s", tx.From)
+		log.Printf("    - To: %s", tx.To)
+		log.Printf("    - Amount: %d", tx.Amount)
+	}
+
 	err := bc.DB.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(blocksBucket))
 
@@ -144,6 +154,7 @@ func (bc *Blockchain) AddBlock(block *Block, transactions []*Transaction) error 
 		blockData := block.Serialize()
 		err := b.Put(block.Hash, blockData)
 		if err != nil {
+			log.Printf("Failed to add block to chain: %v", err)
 			return err
 		}
 
@@ -154,13 +165,21 @@ func (bc *Blockchain) AddBlock(block *Block, transactions []*Transaction) error 
 		if block.Height > lastBlock.Height {
 			err = b.Put([]byte("l"), block.Hash)
 			if err != nil {
+				log.Printf("Failed to update chain tip: %v", err)
 				return err
 			}
 			bc.tip = block.Hash
+			log.Printf("Successfully updated chain tip to new block")
 		}
 
 		return nil
 	})
+
+	if err == nil {
+		log.Printf("Successfully added block to chain")
+		// Clear the mined transactions from mempool only if the block was successfully added
+		bc.ClearTransactionsFromMempool(transactions)
+	}
 
 	return err
 }
@@ -229,47 +248,66 @@ func (bc *Blockchain) Iterator() *BlockchainIterator {
 
 // FindUnspentTransactions returns a list of transactions containing unspent outputs
 func (bc *Blockchain) FindUnspentTransactions(pubKeyHash []byte) []Transaction {
+	log.Printf("Starting FindUnspentTransactions for pubKeyHash: %x", pubKeyHash)
 	var unspentTXs []Transaction
 	spentTXOs := make(map[string][]int)
 	bci := bc.Iterator()
 
+	blockHeight := 0
 	for {
 		block := bci.Next()
+		log.Printf("Processing block at height %d, hash: %x", blockHeight, block.Hash)
 
-		for _, tx := range block.Transactions {
+		for txIndex, tx := range block.Transactions {
 			txID := hex.EncodeToString(tx.ID)
+			log.Printf("  Analyzing transaction %d/%d - ID: %s", txIndex+1, len(block.Transactions), txID)
 
 		Outputs:
 			for outIdx, out := range tx.Vout {
-				// Was the output spent?
+				log.Printf("    Checking output %d (value: %d)", outIdx, out.Value)
+
+				// Check if the output was spent
 				if spentTXOs[txID] != nil {
 					for _, spentOut := range spentTXOs[txID] {
 						if spentOut == outIdx {
+							log.Printf("      Output %d is already spent", outIdx)
 							continue Outputs
 						}
 					}
 				}
 
+				// If the output is locked with the provided pubKeyHash, it's spendable by the owner
 				if out.IsLockedWithKey(pubKeyHash) {
+					log.Printf("      Found unspent output %d belonging to pubKeyHash", outIdx)
 					unspentTXs = append(unspentTXs, *tx)
+				} else {
+					log.Printf("      Output %d is locked with different pubKeyHash", outIdx)
 				}
 			}
 
+			// If this is not a coinbase transaction, collect all inputs that spent outputs
 			if !tx.IsCoinbase() {
-				for _, in := range tx.Vin {
+				log.Printf("    Processing inputs for non-coinbase transaction")
+				for inIdx, in := range tx.Vin {
 					if in.UsesKey(pubKeyHash) {
 						inTxID := hex.EncodeToString(in.Txid)
+						log.Printf("      Input %d spends output %d from transaction %s", inIdx, in.Vout, inTxID)
 						spentTXOs[inTxID] = append(spentTXOs[inTxID], in.Vout)
 					}
 				}
+			} else {
+				log.Printf("    Skipping inputs (coinbase transaction)")
 			}
 		}
 
 		if len(block.PrevBlockHash) == 0 {
+			log.Printf("Reached genesis block, stopping iteration")
 			break
 		}
+		blockHeight++
 	}
 
+	log.Printf("Found %d unspent transactions", len(unspentTXs))
 	return unspentTXs
 }
 
@@ -403,6 +441,7 @@ func (bc *Blockchain) AddTransaction(tx *Transaction) {
 
 // MineBlock mines a new block with the provided transactions
 func (bc *Blockchain) MineBlock(transactions []*Transaction) *Block {
+	fmt.Println("Mining block with transactions:", transactions)
 	var lastHash []byte
 	var lastHeight int
 
@@ -447,4 +486,148 @@ func (bc *Blockchain) MineBlock(transactions []*Transaction) *Block {
 	}
 
 	return newBlock
+}
+
+// GetPendingTransactions returns all transactions from the mempool
+func (bc *Blockchain) GetPendingTransactions() []*Transaction {
+	return bc.mempool
+}
+
+// ClearTransactionsFromMempool removes the given transactions from the mempool
+func (bc *Blockchain) ClearTransactionsFromMempool(transactions []*Transaction) {
+
+	// Create a map of transaction IDs to remove for O(1) lookup
+	toRemove := make(map[string]bool)
+	for _, tx := range transactions {
+		if tx.ID == nil {
+			continue // Skip transactions without IDs
+		}
+		txID := hex.EncodeToString(tx.ID)
+		if txID == "" {
+			continue // Skip empty transaction IDs
+		}
+		toRemove[txID] = true
+	}
+
+	// Filter out the transactions that were mined
+	newMempool := make([]*Transaction, 0)
+	for _, tx := range bc.mempool {
+		if tx.ID == nil {
+			continue // Skip transactions without IDs
+		}
+		txID := hex.EncodeToString(tx.ID)
+		if txID == "" {
+			continue // Skip empty transaction IDs
+		}
+		if !toRemove[txID] {
+			newMempool = append(newMempool, tx)
+		} else {
+		}
+	}
+
+	bc.mempool = newMempool
+}
+
+// GetAllTransactions returns all transactions in the blockchain
+func (bc *Blockchain) GetAllTransactions() []Transaction {
+	var transactions []Transaction
+	bci := bc.Iterator()
+
+	log.Printf("Starting to collect all transactions from blockchain")
+	blockHeight := 0
+	for {
+		block := bci.Next()
+		log.Printf("Processing block at height %d, hash: %x", blockHeight, block.Hash)
+
+		for _, tx := range block.Transactions {
+			transactions = append(transactions, *tx)
+			log.Printf("  Added transaction: ID=%x, From=%s, To=%s, Amount=%d",
+				tx.ID, tx.From, tx.To, tx.Amount)
+		}
+
+		if len(block.PrevBlockHash) == 0 {
+			break
+		}
+		blockHeight++
+	}
+
+	log.Printf("Found total %d transactions in blockchain", len(transactions))
+	return transactions
+}
+
+// TransactionHistoryItem represents a single transaction in the history
+type TransactionHistoryItem struct {
+	TxID        string `json:"txId"`
+	From        string `json:"from"`
+	To          string `json:"to"`
+	Amount      int64  `json:"amount"`
+	BlockHeight int    `json:"blockHeight"`
+	Timestamp   int64  `json:"timestamp"`
+	Type        string `json:"type"` // "sent", "received", or "mining_reward"
+}
+
+// GetTransactionHistory returns the transaction history for a given address
+func (bc *Blockchain) GetTransactionHistory(address string) ([]TransactionHistoryItem, error) {
+	if !ValidateAddress(address) {
+		return nil, fmt.Errorf("invalid address")
+	}
+
+	pubKeyHash := Base58Decode([]byte(address))
+	pubKeyHash = pubKeyHash[1 : len(pubKeyHash)-4]
+
+	history := make([]TransactionHistoryItem, 0)
+	bci := bc.Iterator()
+
+	for {
+		block := bci.Next()
+
+		for _, tx := range block.Transactions {
+			// Check if transaction is related to the address
+			isInvolved := false
+			txType := ""
+
+			// Check outputs (receiving)
+			for _, out := range tx.Vout {
+				if out.IsLockedWithKey(pubKeyHash) {
+					isInvolved = true
+					txType = "received"
+					break
+				}
+			}
+
+			// Check inputs (sending)
+			if !tx.IsCoinbase() {
+				for _, in := range tx.Vin {
+					if in.UsesKey(pubKeyHash) {
+						isInvolved = true
+						txType = "sent"
+						break
+					}
+				}
+			} else if isInvolved {
+				txType = "mining_reward"
+			}
+
+			if isInvolved {
+				// Convert transaction ID to hex string for readability
+				txIDHex := hex.EncodeToString(tx.ID)
+				item := TransactionHistoryItem{
+					TxID:        txIDHex,
+					From:        tx.From,
+					To:          tx.To,
+					Amount:      tx.Amount,
+					BlockHeight: block.Height,
+					Timestamp:   block.Timestamp,
+					Type:        txType,
+				}
+				history = append(history, item)
+			}
+		}
+
+		if len(block.PrevBlockHash) == 0 {
+			break
+		}
+	}
+
+	return history, nil
 }
