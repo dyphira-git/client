@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package mining;
+option go_package = "dyp_chain/proto";
+
+// Mining service definition
+service MiningService {
+  // Mine a new block
+  rpc MineBlock(MineBlockRequest) returns (MineBlockResponse) {}
+  // Get current blockchain status
+  rpc GetBlockchainStatus(BlockchainStatusRequest) returns (BlockchainStatusResponse) {}
+}
+
+// Request to mine a new block
+message MineBlockRequest {
+  repeated Transaction transactions = 1;
+  string miner_address = 2;
+}
+
+// Transaction data
+message Transaction {
+  string from = 1;
+  string to = 2;
+  int64 amount = 3;
+  bytes signature = 4;
+}
+
+// Response after mining a block
+message MineBlockResponse {
+  bool success = 1;
+  string block_hash = 2;
+  string error_message = 3;
+}
+
+// Request to get blockchain status
+message BlockchainStatusRequest {}
+
+// Response containing blockchain status
+message BlockchainStatusResponse {
+  int32 height = 1;
+  string latest_block_hash = 2;
+  int32 difficulty = 3;
+} 

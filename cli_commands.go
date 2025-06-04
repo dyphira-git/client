@@ -3,20 +3,22 @@ package main
 import (
 	"fmt"
 	"log"
+
+	"dyp_chain/blockchain"
 )
 
 func (cli *CLI) createBlockchain(address string) {
-	if !ValidateAddress(address) {
+	if !blockchain.ValidateAddress(address) {
 		log.Panic("ERROR: Address is not valid")
 	}
-	bc := CreateBlockchain(address)
-	defer bc.db.Close()
+	bc := blockchain.CreateBlockchain(address)
+	defer bc.DB.Close()
 
 	fmt.Println("Done!")
 }
 
 func (cli *CLI) createWallet() {
-	wallets, _ := NewWallets()
+	wallets, _ := blockchain.NewWallets()
 	address := wallets.CreateWallet()
 	wallets.SaveToFile()
 
@@ -24,14 +26,14 @@ func (cli *CLI) createWallet() {
 }
 
 func (cli *CLI) getBalance(address string) {
-	if !ValidateAddress(address) {
+	if !blockchain.ValidateAddress(address) {
 		log.Panic("ERROR: Address is not valid")
 	}
-	bc := NewBlockchain()
-	defer bc.db.Close()
+	bc := blockchain.NewBlockchain()
+	defer bc.DB.Close()
 
 	balance := 0
-	pubKeyHash := Base58Decode([]byte(address))
+	pubKeyHash := blockchain.Base58Decode([]byte(address))
 	pubKeyHash = pubKeyHash[1 : len(pubKeyHash)-4]
 	UTXOs := bc.FindUnspentTransactions(pubKeyHash)
 
@@ -47,7 +49,7 @@ func (cli *CLI) getBalance(address string) {
 }
 
 func (cli *CLI) listAddresses() {
-	wallets, err := NewWallets()
+	wallets, err := blockchain.NewWallets()
 	if err != nil {
 		log.Panic(err)
 	}
@@ -59,8 +61,8 @@ func (cli *CLI) listAddresses() {
 }
 
 func (cli *CLI) printChain() {
-	bc := NewBlockchain()
-	defer bc.db.Close()
+	bc := blockchain.NewBlockchain()
+	defer bc.DB.Close()
 
 	bci := bc.Iterator()
 
@@ -69,7 +71,7 @@ func (cli *CLI) printChain() {
 
 		fmt.Printf("============ Block %x ============\n", block.Hash)
 		fmt.Printf("Prev. block: %x\n", block.PrevBlockHash)
-		pow := NewProofOfWork(block)
+		pow := blockchain.NewProofOfWork(block)
 		fmt.Printf("PoW: %t\n\n", pow.Validate())
 
 		for _, tx := range block.Transactions {
@@ -84,17 +86,17 @@ func (cli *CLI) printChain() {
 }
 
 func (cli *CLI) send(from, to string, amount int) {
-	if !ValidateAddress(from) {
+	if !blockchain.ValidateAddress(from) {
 		log.Panic("ERROR: Sender address is not valid")
 	}
-	if !ValidateAddress(to) {
+	if !blockchain.ValidateAddress(to) {
 		log.Panic("ERROR: Recipient address is not valid")
 	}
 
-	bc := NewBlockchain()
-	defer bc.db.Close()
+	bc := blockchain.NewBlockchain()
+	defer bc.DB.Close()
 
-	tx := NewUTXOTransaction(from, to, amount, bc)
-	bc.AddBlock([]*Transaction{tx})
+	tx := blockchain.NewUTXOTransaction(from, to, amount, bc)
+	bc.AddBlock(bc.GetLastBlock(), []*blockchain.Transaction{tx})
 	fmt.Println("Success!")
 }
