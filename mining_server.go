@@ -3,11 +3,14 @@ package main
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
 	"log"
+	"sync"
 
 	blockchain "dyp_chain/blockchain"
 	pb "dyp_chain/proto"
-	"sync"
+
+	"github.com/ethereum/go-ethereum/common"
 )
 
 type miningServer struct {
@@ -22,59 +25,207 @@ func newMiningServer(bc *blockchain.Blockchain) *miningServer {
 	}
 }
 
-// MineBlock handles the mining request from clients
-func (s *miningServer) MineBlock(ctx context.Context, req *pb.MineBlockRequest) (*pb.MineBlockResponse, error) {
+// GetBlockTemplate prepares a new block template for mining
+func (s *miningServer) GetBlockTemplate(ctx context.Context, req *pb.BlockTemplateRequest) (*pb.BlockTemplateResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	log.Printf("Starting mining process with %d transactions", len(req.Transactions))
+	if !common.IsHexAddress(req.MinerAddress) {
+		return nil, fmt.Errorf("invalid miner Ethereum address format")
+	}
+
+	log.Printf("[Server] Getting block template for miner: %s", req.MinerAddress)
 
 	// Get transactions from mempool
 	pendingTxs := s.blockchain.GetPendingTransactions()
-	transactions := make([]*blockchain.Transaction, len(pendingTxs))
-	for i, tx := range pendingTxs {
-		transactions[i] = tx // Use the complete transaction from mempool
-		log.Printf("Processing transaction %d:", i+1)
-		log.Printf("  - ID: %x", transactions[i].ID)
-		log.Printf("  - From: %s", transactions[i].From)
-		log.Printf("  - To: %s", transactions[i].To)
-		log.Printf("  - Amount: %d", transactions[i].Amount)
+	log.Printf("[Server] Found %d total transactions in mempool", len(pendingTxs))
+
+	// Check if there are any non-coinbase transactions
+	hasRealTransactions := false
+	realTxCount := 0
+	for _, tx := range pendingTxs {
+		if !tx.IsCoinbase() {
+			hasRealTransactions = true
+			realTxCount++
+			log.Printf("[Server] Found real transaction: From=%s, To=%s, Amount=%d", tx.From, tx.To, tx.Amount)
+		}
 	}
+
+	if !hasRealTransactions {
+		log.Printf("[Server] No real transactions found in mempool")
+		return nil, fmt.Errorf("no transactions available for mining")
+	}
+	log.Printf("[Server] Found %d real transactions to mine", realTxCount)
+
+	transactions := make([]*blockchain.Transaction, len(pendingTxs))
+	copy(transactions, pendingTxs)
 
 	// Add mining reward transaction
 	reward := blockchain.NewCoinbaseTx(req.MinerAddress, "Mining reward")
-	log.Printf("Adding mining reward transaction:")
-	log.Printf("  - ID: %x", reward.ID)
-	log.Printf("  - To: %s", reward.To)
-	log.Printf("  - Amount: %d", reward.Amount)
 	transactions = append(transactions, reward)
+	log.Printf("[Server] Added coinbase reward transaction for miner: %s", req.MinerAddress)
 
-	// Create and mine a new block
-	log.Printf("Preparing new block for mining...")
+	// Create a block template
 	block := s.blockchain.PrepareNewBlock(transactions)
-	log.Printf("Starting proof of work for block at height %d", block.Height)
-	pow := blockchain.NewProofOfWork(block)
-	nonce, hash := pow.Run()
+	log.Printf("[Server] Prepared block template: Height=%d, PrevHash=%x", block.Height, block.PrevBlockHash)
 
-	block.Nonce = nonce
-	block.Hash = hash
-	log.Printf("Found solution - Block hash: %x, Nonce: %d", hash, nonce)
+	// Convert block to protobuf format
+	pbBlock := &pb.Block{
+		Timestamp:     block.Timestamp,
+		PrevBlockHash: block.PrevBlockHash,
+		Height:        int32(block.Height),
+		Transactions:  make([]*pb.Transaction, len(block.Transactions)),
+	}
+
+	// Convert transactions
+	for i, tx := range block.Transactions {
+		pbTx := &pb.Transaction{
+			From:          tx.From,
+			To:            tx.To,
+			Amount:        tx.Amount,
+			TransactionId: tx.ID,
+			Signature:     tx.Signature,
+			Vin:           make([]*pb.TXInput, len(tx.Vin)),
+			Vout:          make([]*pb.TXOutput, len(tx.Vout)),
+		}
+
+		// Convert Vin and Vout to protobuf format
+		if tx.IsCoinbase() {
+			// For coinbase transactions, we already have the basic fields set
+			log.Printf("[Server] Converting coinbase transaction for miner: %s", tx.To)
+			pbTx.Vin = []*pb.TXInput{
+				{
+					Txid:      []byte{},
+					Vout:      -1,
+					Signature: tx.Signature,
+					PubKey:    []byte("Mining reward"),
+				},
+			}
+			pbTx.Vout = []*pb.TXOutput{
+				{
+					Value:   int32(tx.Amount),
+					Address: tx.To,
+				},
+			}
+		} else {
+			// For regular transactions, include Vin and Vout
+			log.Printf("[Server] Converting regular transaction: From=%s, To=%s, Amount=%d", tx.From, tx.To, tx.Amount)
+
+			// Convert inputs
+			for j, vin := range tx.Vin {
+				pbTx.Vin[j] = &pb.TXInput{
+					Txid:      vin.Txid,
+					Vout:      int32(vin.Vout),
+					Signature: vin.Signature,
+					PubKey:    vin.PubKey,
+				}
+				log.Printf("[Server] Input %d: TxID=%x, Vout=%d", j, vin.Txid, vin.Vout)
+			}
+
+			// Convert outputs
+			for j, vout := range tx.Vout {
+				pbTx.Vout[j] = &pb.TXOutput{
+					Value:   int32(vout.Value),
+					Address: vout.Address,
+				}
+				log.Printf("[Server] Output %d: Value=%d", j, vout.Value)
+			}
+		}
+
+		pbBlock.Transactions[i] = pbTx
+	}
+
+	log.Printf("[Server] Sending block template with %d total transactions", len(pbBlock.Transactions))
+	return &pb.BlockTemplateResponse{
+		Block:      pbBlock,
+		Difficulty: int32(blockchain.GetTargetBits()),
+	}, nil
+}
+
+// SubmitBlock handles the submission of a mined block
+func (s *miningServer) SubmitBlock(ctx context.Context, req *pb.SubmitBlockRequest) (*pb.SubmitBlockResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	log.Printf("[Server] Received block submission: Height=%d, Hash=%x", req.Block.Height, req.BlockHash)
+
+	// Convert protobuf block to blockchain.Block
+	transactions := make([]*blockchain.Transaction, len(req.Block.Transactions))
+	realTxCount := 0
+	for i, tx := range req.Block.Transactions {
+		// Create a new transaction with proper Vin and Vout
+		transactions[i] = &blockchain.Transaction{
+			ID:        tx.TransactionId,
+			From:      tx.From,
+			To:        tx.To,
+			Amount:    tx.Amount,
+			Signature: tx.Signature,
+			Vin:       make([]blockchain.TXInput, len(tx.Vin)),
+			Vout:      make([]blockchain.TXOutput, len(tx.Vout)),
+		}
+
+		// Convert inputs
+		for j, vin := range tx.Vin {
+			transactions[i].Vin[j] = blockchain.TXInput{
+				Txid:      vin.Txid,
+				Vout:      int(vin.Vout),
+				Signature: vin.Signature,
+				PubKey:    vin.PubKey,
+			}
+		}
+
+		// Convert outputs
+		for j, vout := range tx.Vout {
+			transactions[i].Vout[j] = blockchain.TXOutput{
+				Value:   int(vout.Value),
+				Address: vout.Address,
+			}
+		}
+
+		if tx.From == "coinbase" {
+			log.Printf("[Server] Processing coinbase transaction for miner: %s", tx.To)
+		} else {
+			realTxCount++
+			log.Printf("[Server] Processing regular transaction: From=%s, To=%s, Amount=%d", tx.From, tx.To, tx.Amount)
+			log.Printf("[Server] Transaction has %d inputs and %d outputs", len(tx.Vin), len(tx.Vout))
+		}
+	}
+	log.Printf("[Server] Block contains %d real transactions and 1 coinbase transaction", realTxCount)
+
+	block := &blockchain.Block{
+		Timestamp:     req.Block.Timestamp,
+		Transactions:  transactions,
+		PrevBlockHash: req.Block.PrevBlockHash,
+		Hash:          req.BlockHash,
+		Nonce:         int(req.Nonce),
+		Height:        int(req.Block.Height),
+	}
+
+	// Verify the proof of work
+	pow := blockchain.NewProofOfWork(block)
+	if !pow.Validate() {
+		log.Printf("[Server] Block validation failed: invalid proof of work. Hash=%x, Nonce=%d", req.BlockHash, req.Nonce)
+		return &pb.SubmitBlockResponse{
+			Success:      false,
+			ErrorMessage: "invalid proof of work",
+		}, nil
+	}
+	log.Printf("[Server] Block proof of work validation successful")
 
 	// Add the block to the blockchain
-	log.Printf("Attempting to add block to blockchain...")
 	err := s.blockchain.AddBlock(block, transactions)
 	if err != nil {
-		log.Printf("Failed to add block to blockchain: %v", err)
-		return &pb.MineBlockResponse{
+		log.Printf("[Server] Failed to add block to chain: %v", err)
+		return &pb.SubmitBlockResponse{
 			Success:      false,
 			ErrorMessage: err.Error(),
 		}, nil
 	}
 
-	log.Printf("Successfully mined and added block %x", hash)
-	return &pb.MineBlockResponse{
+	log.Printf("[Server] Successfully added block to chain: Height=%d, Hash=%x", block.Height, block.Hash)
+	return &pb.SubmitBlockResponse{
 		Success:   true,
-		BlockHash: hex.EncodeToString(hash),
+		BlockHash: hex.EncodeToString(req.BlockHash),
 	}, nil
 }
 
@@ -84,11 +235,12 @@ func (s *miningServer) GetBlockchainStatus(ctx context.Context, req *pb.Blockcha
 	defer s.mu.Unlock()
 
 	tip := s.blockchain.GetLastBlock()
+	log.Printf("[Server] Current blockchain status: Height=%d, TipHash=%x", tip.Height, tip.Hash)
 
 	return &pb.BlockchainStatusResponse{
 		Height:          int32(s.blockchain.GetHeight()),
 		LatestBlockHash: hex.EncodeToString(tip.Hash),
-		Difficulty:      int32(16),
+		Difficulty:      int32(blockchain.GetTargetBits()),
 	}, nil
 }
 
@@ -97,26 +249,27 @@ func (s *miningServer) GetPendingTransactions(ctx context.Context, req *pb.Pendi
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Get pending transactions from the mempool
 	pendingTxs := s.blockchain.GetPendingTransactions()
+	log.Printf("[Server] Getting pending transactions, found %d total", len(pendingTxs))
 
-	// Convert blockchain transactions to proto transactions
-	protoTxs := make([]*pb.Transaction, 0) // Only include valid transactions
-	for _, tx := range pendingTxs {
-		if tx.ID == nil {
-			continue // Skip invalid transactions
-		}
-		protoTx := &pb.Transaction{
+	pbTxs := make([]*pb.Transaction, len(pendingTxs))
+	realTxCount := 0
+	for i, tx := range pendingTxs {
+		pbTxs[i] = &pb.Transaction{
 			From:          tx.From,
 			To:            tx.To,
 			Amount:        tx.Amount,
+			TransactionId: tx.ID,
 			Signature:     tx.Signature,
-			TransactionId: tx.ID, // Use the new transaction_id field
 		}
-		protoTxs = append(protoTxs, protoTx)
+		if tx.From != "coinbase" {
+			realTxCount++
+			log.Printf("[Server] Pending transaction %d: From=%s, To=%s, Amount=%d", i, tx.From, tx.To, tx.Amount)
+		}
 	}
+	log.Printf("[Server] Returning %d real transactions from mempool", realTxCount)
 
 	return &pb.PendingTransactionsResponse{
-		Transactions: protoTxs,
+		Transactions: pbTxs,
 	}, nil
 }

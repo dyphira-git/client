@@ -12,6 +12,11 @@ import (
 const targetBits = 16
 const maxNonce = math.MaxInt64
 
+// GetTargetBits returns the current mining difficulty
+func GetTargetBits() int {
+	return targetBits
+}
+
 // ProofOfWork represents a proof-of-work
 type ProofOfWork struct {
 	block  *Block

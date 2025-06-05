@@ -9,8 +9,10 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/boltdb/bolt"
+	"github.com/ethereum/go-ethereum/common"
 )
 
 var dbFile string
@@ -133,15 +135,6 @@ func NewBlockchain() *Blockchain {
 
 // AddBlock adds a mined block to the blockchain
 func (bc *Blockchain) AddBlock(block *Block, transactions []*Transaction) error {
-	log.Printf("Attempting to add block to chain - Height: %d, Hash: %x", block.Height, block.Hash)
-	log.Printf("Block contains %d transactions:", len(block.Transactions))
-	for i, tx := range block.Transactions {
-		log.Printf("  Transaction %d:", i+1)
-		log.Printf("    - ID: %x", tx.ID)
-		log.Printf("    - From: %s", tx.From)
-		log.Printf("    - To: %s", tx.To)
-		log.Printf("    - Amount: %d", tx.Amount)
-	}
 
 	err := bc.DB.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(blocksBucket))
@@ -169,14 +162,12 @@ func (bc *Blockchain) AddBlock(block *Block, transactions []*Transaction) error 
 				return err
 			}
 			bc.tip = block.Hash
-			log.Printf("Successfully updated chain tip to new block")
 		}
 
 		return nil
 	})
 
 	if err == nil {
-		log.Printf("Successfully added block to chain")
 		// Clear the mined transactions from mempool only if the block was successfully added
 		bc.ClearTransactionsFromMempool(transactions)
 	}
@@ -206,7 +197,7 @@ func (bc *Blockchain) FindTransaction(ID []byte) (Transaction, error) {
 }
 
 // SignTransaction signs inputs of a Transaction
-func (bc *Blockchain) SignTransaction(tx *Transaction, privKey ecdsa.PrivateKey) {
+func (bc *Blockchain) SignTransaction(tx *Transaction, privKey *ecdsa.PrivateKey) {
 	prevTXs := make(map[string]Transaction)
 
 	for _, vin := range tx.Vin {
@@ -247,74 +238,56 @@ func (bc *Blockchain) Iterator() *BlockchainIterator {
 }
 
 // FindUnspentTransactions returns a list of transactions containing unspent outputs
-func (bc *Blockchain) FindUnspentTransactions(pubKeyHash []byte) []Transaction {
-	log.Printf("Starting FindUnspentTransactions for pubKeyHash: %x", pubKeyHash)
+func (bc *Blockchain) FindUnspentTransactions(address string) []Transaction {
 	var unspentTXs []Transaction
 	spentTXOs := make(map[string][]int)
 	bci := bc.Iterator()
 
-	blockHeight := 0
 	for {
 		block := bci.Next()
-		log.Printf("Processing block at height %d, hash: %x", blockHeight, block.Hash)
 
-		for txIndex, tx := range block.Transactions {
+		for _, tx := range block.Transactions {
 			txID := hex.EncodeToString(tx.ID)
-			log.Printf("  Analyzing transaction %d/%d - ID: %s", txIndex+1, len(block.Transactions), txID)
 
 		Outputs:
 			for outIdx, out := range tx.Vout {
-				log.Printf("    Checking output %d (value: %d)", outIdx, out.Value)
-
 				// Check if the output was spent
 				if spentTXOs[txID] != nil {
 					for _, spentOut := range spentTXOs[txID] {
 						if spentOut == outIdx {
-							log.Printf("      Output %d is already spent", outIdx)
 							continue Outputs
 						}
 					}
 				}
 
-				// If the output is locked with the provided pubKeyHash, it's spendable by the owner
-				if out.IsLockedWithKey(pubKeyHash) {
-					log.Printf("      Found unspent output %d belonging to pubKeyHash", outIdx)
+				// If the output address matches, it's spendable by the owner
+				if strings.EqualFold(out.Address, address) {
 					unspentTXs = append(unspentTXs, *tx)
-				} else {
-					log.Printf("      Output %d is locked with different pubKeyHash", outIdx)
 				}
 			}
 
 			// If this is not a coinbase transaction, collect all inputs that spent outputs
 			if !tx.IsCoinbase() {
-				log.Printf("    Processing inputs for non-coinbase transaction")
-				for inIdx, in := range tx.Vin {
-					if in.UsesKey(pubKeyHash) {
+				for _, in := range tx.Vin {
+					if in.UsesKey(address) {
 						inTxID := hex.EncodeToString(in.Txid)
-						log.Printf("      Input %d spends output %d from transaction %s", inIdx, in.Vout, inTxID)
 						spentTXOs[inTxID] = append(spentTXOs[inTxID], in.Vout)
 					}
 				}
-			} else {
-				log.Printf("    Skipping inputs (coinbase transaction)")
 			}
 		}
 
 		if len(block.PrevBlockHash) == 0 {
-			log.Printf("Reached genesis block, stopping iteration")
 			break
 		}
-		blockHeight++
 	}
-
-	log.Printf("Found %d unspent transactions", len(unspentTXs))
 	return unspentTXs
 }
 
 // FindSpendableOutputs finds and returns unspent outputs to reference in inputs
-func (bc *Blockchain) FindSpendableOutputs(pubKeyHash []byte, amount int) (int, map[string][]int) {
+func (bc *Blockchain) FindSpendableOutputs(address string, amount int) (int, map[string][]int) {
 	unspentOutputs := make(map[string][]int)
-	unspentTXs := bc.FindUnspentTransactions(pubKeyHash)
+	unspentTXs := bc.FindUnspentTransactions(address)
 	accumulated := 0
 
 Work:
@@ -322,7 +295,7 @@ Work:
 		txID := hex.EncodeToString(tx.ID)
 
 		for outIdx, out := range tx.Vout {
-			if out.IsLockedWithKey(pubKeyHash) && accumulated < amount {
+			if strings.EqualFold(out.Address, address) && accumulated < amount {
 				accumulated += out.Value
 				unspentOutputs[txID] = append(unspentOutputs[txID], outIdx)
 
@@ -357,13 +330,7 @@ func (bc *Blockchain) GetGenesisAddress() string {
 	}
 
 	// Get the recipient address from the first output
-	pubKeyHash := genesisTx.Vout[0].PubKeyHash
-	versionedPayload := append([]byte{version}, pubKeyHash...)
-	checksum := checksum(versionedPayload)
-	fullPayload := append(versionedPayload, checksum...)
-	address := string(Base58Encode(fullPayload))
-
-	return address
+	return genesisTx.Vout[0].Address
 }
 
 func dbExists() bool {
@@ -533,25 +500,18 @@ func (bc *Blockchain) GetAllTransactions() []Transaction {
 	var transactions []Transaction
 	bci := bc.Iterator()
 
-	log.Printf("Starting to collect all transactions from blockchain")
-	blockHeight := 0
 	for {
 		block := bci.Next()
-		log.Printf("Processing block at height %d, hash: %x", blockHeight, block.Hash)
 
 		for _, tx := range block.Transactions {
 			transactions = append(transactions, *tx)
-			log.Printf("  Added transaction: ID=%x, From=%s, To=%s, Amount=%d",
-				tx.ID, tx.From, tx.To, tx.Amount)
 		}
 
 		if len(block.PrevBlockHash) == 0 {
 			break
 		}
-		blockHeight++
 	}
 
-	log.Printf("Found total %d transactions in blockchain", len(transactions))
 	return transactions
 }
 
@@ -568,12 +528,9 @@ type TransactionHistoryItem struct {
 
 // GetTransactionHistory returns the transaction history for a given address
 func (bc *Blockchain) GetTransactionHistory(address string) ([]TransactionHistoryItem, error) {
-	if !ValidateAddress(address) {
+	if !common.IsHexAddress(address) {
 		return nil, fmt.Errorf("invalid address")
 	}
-
-	pubKeyHash := Base58Decode([]byte(address))
-	pubKeyHash = pubKeyHash[1 : len(pubKeyHash)-4]
 
 	history := make([]TransactionHistoryItem, 0)
 	bci := bc.Iterator()
@@ -588,7 +545,7 @@ func (bc *Blockchain) GetTransactionHistory(address string) ([]TransactionHistor
 
 			// Check outputs (receiving)
 			for _, out := range tx.Vout {
-				if out.IsLockedWithKey(pubKeyHash) {
+				if strings.EqualFold(out.Address, address) {
 					isInvolved = true
 					txType = "received"
 					break
@@ -598,7 +555,7 @@ func (bc *Blockchain) GetTransactionHistory(address string) ([]TransactionHistor
 			// Check inputs (sending)
 			if !tx.IsCoinbase() {
 				for _, in := range tx.Vin {
-					if in.UsesKey(pubKeyHash) {
+					if in.UsesKey(address) {
 						isInvolved = true
 						txType = "sent"
 						break
@@ -630,4 +587,24 @@ func (bc *Blockchain) GetTransactionHistory(address string) ([]TransactionHistor
 	}
 
 	return history, nil
+}
+
+// GetBalance returns the balance of an address
+func (bc *Blockchain) GetBalance(address string) int {
+	if !common.IsHexAddress(address) {
+		return 0
+	}
+
+	balance := 0
+	unspentTXs := bc.FindUnspentTransactions(address)
+
+	for _, tx := range unspentTXs {
+		for _, out := range tx.Vout {
+			if strings.EqualFold(out.Address, address) {
+				balance += out.Value
+			}
+		}
+	}
+
+	return balance
 }

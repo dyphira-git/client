@@ -19,7 +19,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	MiningService_MineBlock_FullMethodName              = "/mining.MiningService/MineBlock"
+	MiningService_GetBlockTemplate_FullMethodName       = "/mining.MiningService/GetBlockTemplate"
+	MiningService_SubmitBlock_FullMethodName            = "/mining.MiningService/SubmitBlock"
 	MiningService_GetBlockchainStatus_FullMethodName    = "/mining.MiningService/GetBlockchainStatus"
 	MiningService_GetPendingTransactions_FullMethodName = "/mining.MiningService/GetPendingTransactions"
 )
@@ -30,8 +31,10 @@ const (
 //
 // Mining service definition
 type MiningServiceClient interface {
-	// Mine a new block
-	MineBlock(ctx context.Context, in *MineBlockRequest, opts ...grpc.CallOption) (*MineBlockResponse, error)
+	// Get a block template for mining
+	GetBlockTemplate(ctx context.Context, in *BlockTemplateRequest, opts ...grpc.CallOption) (*BlockTemplateResponse, error)
+	// Submit a mined block
+	SubmitBlock(ctx context.Context, in *SubmitBlockRequest, opts ...grpc.CallOption) (*SubmitBlockResponse, error)
 	// Get current blockchain status
 	GetBlockchainStatus(ctx context.Context, in *BlockchainStatusRequest, opts ...grpc.CallOption) (*BlockchainStatusResponse, error)
 	// Get pending transactions
@@ -46,10 +49,20 @@ func NewMiningServiceClient(cc grpc.ClientConnInterface) MiningServiceClient {
 	return &miningServiceClient{cc}
 }
 
-func (c *miningServiceClient) MineBlock(ctx context.Context, in *MineBlockRequest, opts ...grpc.CallOption) (*MineBlockResponse, error) {
+func (c *miningServiceClient) GetBlockTemplate(ctx context.Context, in *BlockTemplateRequest, opts ...grpc.CallOption) (*BlockTemplateResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(MineBlockResponse)
-	err := c.cc.Invoke(ctx, MiningService_MineBlock_FullMethodName, in, out, cOpts...)
+	out := new(BlockTemplateResponse)
+	err := c.cc.Invoke(ctx, MiningService_GetBlockTemplate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *miningServiceClient) SubmitBlock(ctx context.Context, in *SubmitBlockRequest, opts ...grpc.CallOption) (*SubmitBlockResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SubmitBlockResponse)
+	err := c.cc.Invoke(ctx, MiningService_SubmitBlock_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -82,8 +95,10 @@ func (c *miningServiceClient) GetPendingTransactions(ctx context.Context, in *Pe
 //
 // Mining service definition
 type MiningServiceServer interface {
-	// Mine a new block
-	MineBlock(context.Context, *MineBlockRequest) (*MineBlockResponse, error)
+	// Get a block template for mining
+	GetBlockTemplate(context.Context, *BlockTemplateRequest) (*BlockTemplateResponse, error)
+	// Submit a mined block
+	SubmitBlock(context.Context, *SubmitBlockRequest) (*SubmitBlockResponse, error)
 	// Get current blockchain status
 	GetBlockchainStatus(context.Context, *BlockchainStatusRequest) (*BlockchainStatusResponse, error)
 	// Get pending transactions
@@ -98,8 +113,11 @@ type MiningServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedMiningServiceServer struct{}
 
-func (UnimplementedMiningServiceServer) MineBlock(context.Context, *MineBlockRequest) (*MineBlockResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method MineBlock not implemented")
+func (UnimplementedMiningServiceServer) GetBlockTemplate(context.Context, *BlockTemplateRequest) (*BlockTemplateResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetBlockTemplate not implemented")
+}
+func (UnimplementedMiningServiceServer) SubmitBlock(context.Context, *SubmitBlockRequest) (*SubmitBlockResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitBlock not implemented")
 }
 func (UnimplementedMiningServiceServer) GetBlockchainStatus(context.Context, *BlockchainStatusRequest) (*BlockchainStatusResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetBlockchainStatus not implemented")
@@ -128,20 +146,38 @@ func RegisterMiningServiceServer(s grpc.ServiceRegistrar, srv MiningServiceServe
 	s.RegisterService(&MiningService_ServiceDesc, srv)
 }
 
-func _MiningService_MineBlock_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MineBlockRequest)
+func _MiningService_GetBlockTemplate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BlockTemplateRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MiningServiceServer).MineBlock(ctx, in)
+		return srv.(MiningServiceServer).GetBlockTemplate(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: MiningService_MineBlock_FullMethodName,
+		FullMethod: MiningService_GetBlockTemplate_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MiningServiceServer).MineBlock(ctx, req.(*MineBlockRequest))
+		return srv.(MiningServiceServer).GetBlockTemplate(ctx, req.(*BlockTemplateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MiningService_SubmitBlock_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SubmitBlockRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MiningServiceServer).SubmitBlock(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MiningService_SubmitBlock_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MiningServiceServer).SubmitBlock(ctx, req.(*SubmitBlockRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -190,8 +226,12 @@ var MiningService_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*MiningServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "MineBlock",
-			Handler:    _MiningService_MineBlock_Handler,
+			MethodName: "GetBlockTemplate",
+			Handler:    _MiningService_GetBlockTemplate_Handler,
+		},
+		{
+			MethodName: "SubmitBlock",
+			Handler:    _MiningService_SubmitBlock_Handler,
 		},
 		{
 			MethodName: "GetBlockchainStatus",

@@ -5,34 +5,72 @@ option go_package = "dyp_chain/proto";
 
 // Mining service definition
 service MiningService {
-  // Mine a new block
-  rpc MineBlock(MineBlockRequest) returns (MineBlockResponse) {}
+  // Get a block template for mining
+  rpc GetBlockTemplate(BlockTemplateRequest) returns (BlockTemplateResponse) {}
+  // Submit a mined block
+  rpc SubmitBlock(SubmitBlockRequest) returns (SubmitBlockResponse) {}
   // Get current blockchain status
   rpc GetBlockchainStatus(BlockchainStatusRequest) returns (BlockchainStatusResponse) {}
   // Get pending transactions
   rpc GetPendingTransactions(PendingTransactionsRequest) returns (PendingTransactionsResponse) {}
 }
 
-// Request to mine a new block
-message MineBlockRequest {
-  repeated Transaction transactions = 1;
-  string miner_address = 2;
+// Request for a block template
+message BlockTemplateRequest {
+  string miner_address = 1; // Ethereum address
+}
+
+// Block data structure
+message Block {
+  int64 timestamp = 1;
+  bytes prev_block_hash = 2;
+  int32 height = 3;
+  repeated Transaction transactions = 4;
+}
+
+// Response containing a block template
+message BlockTemplateResponse {
+  Block block = 1;
+  int32 difficulty = 2;
+}
+
+// Request to submit a mined block
+message SubmitBlockRequest {
+  Block block = 1;
+  bytes block_hash = 2;
+  int32 nonce = 3;
+}
+
+// Response after submitting a block
+message SubmitBlockResponse {
+  bool success = 1;
+  string block_hash = 2;
+  string error_message = 3;
 }
 
 // Transaction data
 message Transaction {
-  string from = 1;
-  string to = 2;
+  string from = 1;      // Ethereum address
+  string to = 2;        // Ethereum address
   int64 amount = 3;
   bytes signature = 4;
   bytes transaction_id = 5;
+  repeated TXInput vin = 6;
+  repeated TXOutput vout = 7;
 }
 
-// Response after mining a block
-message MineBlockResponse {
-  bool success = 1;
-  string block_hash = 2;
-  string error_message = 3;
+// Transaction Input
+message TXInput {
+  bytes txid = 1;
+  int32 vout = 2;
+  bytes signature = 3;
+  bytes pub_key = 4;    // Public key bytes
+}
+
+// Transaction Output
+message TXOutput {
+  int32 value = 1;
+  string address = 2;   // Ethereum address
 }
 
 // Request to get blockchain status

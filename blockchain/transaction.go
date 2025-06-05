@@ -3,17 +3,18 @@ package blockchain
 import (
 	"bytes"
 	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/sha256"
 	"encoding/gob"
 	"encoding/hex"
-	"math/big"
+	"log"
+	"strings"
+
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 const MINING_REWARD = int64(50)
 
-// Transaction represents a Bitcoin transaction
+// Transaction represents a blockchain transaction
 type Transaction struct {
 	ID        []byte
 	Vin       []TXInput
@@ -33,21 +34,29 @@ type TXInput struct {
 }
 
 // UsesKey checks whether the address initiated the transaction
-func (in *TXInput) UsesKey(pubKeyHash []byte) bool {
-	lockingHash := HashPubKey(in.PubKey)
-
-	return bytes.Equal(lockingHash, pubKeyHash)
+func (in *TXInput) UsesKey(address string) bool {
+	// Convert the input's public key to an Ethereum address
+	pubKey, err := crypto.UnmarshalPubkey(in.PubKey)
+	if err != nil {
+		return false
+	}
+	inputAddress := crypto.PubkeyToAddress(*pubKey)
+	return strings.EqualFold(inputAddress.Hex(), address)
 }
 
 // TXOutput represents a transaction output
 type TXOutput struct {
-	Value      int
-	PubKeyHash []byte
+	Value   int
+	Address string // Ethereum address
 }
 
 // NewCoinbaseTx creates a new coinbase transaction
 func NewCoinbaseTx(to, data string) *Transaction {
-	txin := TXInput{[]byte{}, -1, nil, []byte(data)}
+	if !common.IsHexAddress(to) {
+		log.Panic("Invalid miner address")
+	}
+
+	txin := TXInput{[]byte{}, -1, nil, nil}
 	txout := NewTXOutput(int(MINING_REWARD), to)
 	tx := Transaction{
 		ID:        []byte{},
@@ -63,31 +72,38 @@ func NewCoinbaseTx(to, data string) *Transaction {
 }
 
 // NewUTXOTransaction creates a new transaction
-func NewUTXOTransaction(from, to string, amount int, bc *Blockchain) *Transaction {
+func NewUTXOTransaction(privateKeyHex, from, to string, amount int, bc *Blockchain) *Transaction {
 	var inputs []TXInput
 	var outputs []TXOutput
 
-	wallets, err := NewWallets()
-	if err != nil {
-		panic(err)
+	// Validate addresses
+	if !common.IsHexAddress(from) || !common.IsHexAddress(to) {
+		log.Panic("Invalid address format")
 	}
-	wallet := wallets.GetWallet(from)
-	pubKeyHash := HashPubKey(wallet.PublicKey)
-	acc, validOutputs := bc.FindSpendableOutputs(pubKeyHash, amount)
+
+	// Create wallet from private key
+	wallet, err := NewWalletFromPrivateKey(privateKeyHex)
+	if err != nil {
+		log.Panic(err)
+	}
+
+	acc, validOutputs := bc.FindSpendableOutputs(from, amount)
 
 	if acc < amount {
-		panic("ERROR: Not enough funds")
+		log.Panic("ERROR: Not enough funds")
 	}
 
 	// Build a list of inputs
 	for txid, outs := range validOutputs {
 		txID, err := hex.DecodeString(txid)
 		if err != nil {
-			panic(err)
+			log.Panic(err)
 		}
 
 		for _, out := range outs {
-			input := TXInput{txID, out, nil, wallet.PublicKey}
+			// Get the public key bytes
+			pubKeyBytes := crypto.FromECDSAPub(&wallet.PrivateKey.PublicKey)
+			input := TXInput{txID, out, nil, pubKeyBytes}
 			inputs = append(inputs, input)
 		}
 	}
@@ -119,9 +135,8 @@ func (tx *Transaction) Hash() []byte {
 
 	txCopy := *tx
 	txCopy.ID = []byte{}
-	txCopy.Signature = nil // Clear signature for hashing
+	txCopy.Signature = nil
 
-	// Create a hash that includes all transaction fields
 	data := struct {
 		Vin    []TXInput
 		Vout   []TXOutput
@@ -140,15 +155,15 @@ func (tx *Transaction) Hash() []byte {
 	enc := gob.NewEncoder(&buf)
 	err := enc.Encode(data)
 	if err != nil {
-		panic(err)
+		log.Panic(err)
 	}
 
-	hash = sha256.Sum256(buf.Bytes())
+	hash = crypto.Keccak256Hash(buf.Bytes())
 	return hash[:]
 }
 
 // Sign signs each input of a Transaction
-func (tx *Transaction) Sign(privKey ecdsa.PrivateKey, prevTXs map[string]Transaction) {
+func (tx *Transaction) Sign(privKey *ecdsa.PrivateKey, prevTXs map[string]Transaction) {
 	if tx.IsCoinbase() {
 		return
 	}
@@ -158,15 +173,16 @@ func (tx *Transaction) Sign(privKey ecdsa.PrivateKey, prevTXs map[string]Transac
 	for inID, vin := range txCopy.Vin {
 		prevTx := prevTXs[hex.EncodeToString(vin.Txid)]
 		txCopy.Vin[inID].Signature = nil
-		txCopy.Vin[inID].PubKey = prevTx.Vout[vin.Vout].PubKeyHash
+		txCopy.Vin[inID].PubKey = []byte(prevTx.Vout[vin.Vout].Address)
 		txCopy.ID = txCopy.Hash()
 		txCopy.Vin[inID].PubKey = nil
 
-		r, s, err := ecdsa.Sign(rand.Reader, &privKey, txCopy.ID)
+		// Sign the hash with Ethereum's signing method
+		dataHash := crypto.Keccak256Hash(txCopy.ID)
+		signature, err := crypto.Sign(dataHash.Bytes(), privKey)
 		if err != nil {
-			panic(err)
+			log.Panic(err)
 		}
-		signature := append(r.Bytes(), s.Bytes()...)
 
 		tx.Vin[inID].Signature = signature
 	}
@@ -179,29 +195,33 @@ func (tx *Transaction) Verify(prevTXs map[string]Transaction) bool {
 	}
 
 	txCopy := tx.TrimmedCopy()
-	curve := elliptic.P256()
 
 	for inID, vin := range tx.Vin {
 		prevTx := prevTXs[hex.EncodeToString(vin.Txid)]
 		txCopy.Vin[inID].Signature = nil
-		txCopy.Vin[inID].PubKey = prevTx.Vout[vin.Vout].PubKeyHash
+		txCopy.Vin[inID].PubKey = []byte(prevTx.Vout[vin.Vout].Address)
 		txCopy.ID = txCopy.Hash()
 		txCopy.Vin[inID].PubKey = nil
 
-		r := big.Int{}
-		s := big.Int{}
-		sigLen := len(vin.Signature)
-		r.SetBytes(vin.Signature[:(sigLen / 2)])
-		s.SetBytes(vin.Signature[(sigLen / 2):])
+		dataHash := crypto.Keccak256Hash(txCopy.ID)
 
-		x := big.Int{}
-		y := big.Int{}
-		keyLen := len(vin.PubKey)
-		x.SetBytes(vin.PubKey[:(keyLen / 2)])
-		y.SetBytes(vin.PubKey[(keyLen / 2):])
+		// Recover the public key from the signature
+		pubKey, err := crypto.Ecrecover(dataHash.Bytes(), vin.Signature)
+		if err != nil {
+			return false
+		}
 
-		rawPubKey := ecdsa.PublicKey{Curve: curve, X: &x, Y: &y}
-		if !ecdsa.Verify(&rawPubKey, txCopy.ID, &r, &s) {
+		// Verify the signature
+		sigPublicKeyECDSA, err := crypto.UnmarshalPubkey(pubKey)
+		if err != nil {
+			return false
+		}
+
+		// Get the address from the public key
+		recoveredAddr := crypto.PubkeyToAddress(*sigPublicKeyECDSA)
+		expectedAddr := common.HexToAddress(string(prevTx.Vout[vin.Vout].Address))
+
+		if recoveredAddr != expectedAddr {
 			return false
 		}
 	}
@@ -219,7 +239,7 @@ func (tx *Transaction) TrimmedCopy() Transaction {
 	}
 
 	for _, vout := range tx.Vout {
-		outputs = append(outputs, TXOutput{vout.Value, vout.PubKeyHash})
+		outputs = append(outputs, TXOutput{vout.Value, vout.Address})
 	}
 
 	txCopy := Transaction{tx.ID, inputs, outputs, tx.From, tx.To, tx.Amount, nil}
@@ -234,7 +254,7 @@ func (tx Transaction) Serialize() []byte {
 	enc := gob.NewEncoder(&encoded)
 	err := enc.Encode(tx)
 	if err != nil {
-		panic(err)
+		log.Panic(err)
 	}
 
 	return encoded.Bytes()
@@ -247,19 +267,8 @@ func (tx Transaction) IsCoinbase() bool {
 
 // NewTXOutput creates a new TXOutput
 func NewTXOutput(value int, address string) *TXOutput {
-	txo := &TXOutput{value, nil}
-	txo.Lock([]byte(address))
-	return txo
-}
-
-// Lock signs the output
-func (out *TXOutput) Lock(address []byte) {
-	pubKeyHash := Base58Decode(address)
-	pubKeyHash = pubKeyHash[1 : len(pubKeyHash)-4]
-	out.PubKeyHash = pubKeyHash
-}
-
-// IsLockedWithKey checks if the output can be used by the owner of the pubkey
-func (out *TXOutput) IsLockedWithKey(pubKeyHash []byte) bool {
-	return bytes.Equal(out.PubKeyHash, pubKeyHash)
+	if !common.IsHexAddress(address) {
+		log.Panic("Invalid address format")
+	}
+	return &TXOutput{value, address}
 }

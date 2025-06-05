@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"strings"
 
 	"dyp_chain/blockchain"
+
+	"github.com/ethereum/go-ethereum/common"
 )
 
 // enableCORS wraps an http.HandlerFunc and adds CORS headers to the response
@@ -49,9 +50,10 @@ type BalanceResponse struct {
 }
 
 type SendRequest struct {
-	PrivateKey string `json:"private_key"`
-	ToAddress  string `json:"to_address"`
-	Amount     int    `json:"amount"`
+	PrivateKey  string `json:"private_key"`
+	FromAddress string `json:"from"`
+	ToAddress   string `json:"to"`
+	Amount      int    `json:"amount"`
 }
 
 type CreateBlockchainRequest struct {
@@ -73,6 +75,22 @@ type TransactionHistoryResponse struct {
 	History []blockchain.TransactionHistoryItem `json:"history"`
 }
 
+// TransactionResponse represents a single transaction in the response
+type TransactionResponse struct {
+	TxID        string `json:"txId"`
+	From        string `json:"from"`
+	To          string `json:"to"`
+	Amount      int64  `json:"amount"`
+	BlockHeight int    `json:"blockHeight"`
+	Timestamp   int64  `json:"timestamp"`
+	Type        string `json:"type"`
+}
+
+// AllTransactionsResponse represents the response structure for all transactions
+type AllTransactionsResponse struct {
+	Transactions []TransactionResponse `json:"transactions"`
+}
+
 func NewServer(port string, bc *blockchain.Blockchain) *Server {
 	return &Server{port: port, bc: bc}
 }
@@ -80,191 +98,101 @@ func NewServer(port string, bc *blockchain.Blockchain) *Server {
 func (s *Server) Start() {
 	mux := http.NewServeMux()
 
-	// Create a new wallet
-	mux.HandleFunc("/wallet", enableCORS(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost:
-			wallets, _ := blockchain.NewWallets()
-			address := wallets.CreateWallet()
-			wallet := wallets.GetWallet(address)
-
-			// Convert private key to hex string
-			privateKeyBytes := wallet.PrivateKey.D.Bytes()
-			privateKeyHex := hex.EncodeToString(privateKeyBytes)
-
-			wallets.SaveToFile()
-
-			json.NewEncoder(w).Encode(CreateWalletResponse{
-				Address:    address,
-				PrivateKey: privateKeyHex,
-			})
-		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-	}))
-
-	// Import wallet
-	mux.HandleFunc("/wallet/import", enableCORS(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		var req ImportWalletRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		if req.PrivateKey == "" {
-			http.Error(w, "PrivateKey is required", http.StatusBadRequest)
-			return
-		}
-
-		// Create wallet from private key
-		wallet, err := blockchain.NewWalletFromPrivateKey(req.PrivateKey)
-		if err != nil {
-			http.Error(w, "Invalid private key: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		// Get the address
-		address := string(wallet.GetAddress())
-
-		// Save the wallet
-		wallets, _ := blockchain.NewWallets()
-		wallets.Wallets[address] = wallet
-		wallets.SaveToFile()
-
-		json.NewEncoder(w).Encode(ImportWalletResponse{
-			Address:    address,
-			PrivateKey: req.PrivateKey,
-		})
-	}))
-
 	// Get balance
-	mux.HandleFunc("/wallet/", enableCORS(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/balance/", enableCORS(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		// Skip "/wallet/" prefix and "/balance" suffix to get the address
-		path := r.URL.Path[len("/wallet/"):]
-		if !strings.HasSuffix(path, "/balance") {
-			http.Error(w, "Invalid endpoint", http.StatusNotFound)
-			return
-		}
+		// Skip "/balance/" prefix to get the address
+		path := r.URL.Path[len("/balance/"):]
 
-		address := path[:len(path)-len("/balance")]
+		address := path
 		if address == "" {
 			http.Error(w, "Address parameter is required", http.StatusBadRequest)
 			return
 		}
 
-		if !blockchain.ValidateAddress(address) {
-			http.Error(w, "Invalid address", http.StatusBadRequest)
+		if !common.IsHexAddress(address) {
+			http.Error(w, "Invalid Ethereum address format", http.StatusBadRequest)
 			return
 		}
 
-		pubKeyHash := blockchain.Base58Decode([]byte(address))
-		pubKeyHash = pubKeyHash[1 : len(pubKeyHash)-4]
-		UTXOs := s.bc.FindUnspentTransactions(pubKeyHash)
+		balance := s.bc.GetBalance(address)
 
-		balance := 0
-		for _, tx := range UTXOs {
-			for _, out := range tx.Vout {
-				if out.IsLockedWithKey(pubKeyHash) {
-					balance += out.Value
-				}
-			}
-		}
-
+		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(BalanceResponse{
 			Address: address,
 			Balance: balance,
 		})
 	}))
 
-	// List all addresses
-	mux.HandleFunc("/wallets", enableCORS(func(w http.ResponseWriter, r *http.Request) {
+	// Get all transactions
+	mux.HandleFunc("/transactions", enableCORS(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		wallets, err := blockchain.NewWallets()
-		if err != nil {
-			http.Error(w, "Failed to get wallets", http.StatusInternalServerError)
+		transactions := s.bc.GetAllTransactions()
+		response := AllTransactionsResponse{
+			Transactions: make([]TransactionResponse, len(transactions)),
+		}
+
+		for i, tx := range transactions {
+			txType := "transfer"
+			if tx.IsCoinbase() {
+				txType = "mining_reward"
+			}
+
+			response.Transactions[i] = TransactionResponse{
+				TxID:   hex.EncodeToString(tx.ID),
+				From:   tx.From,
+				To:     tx.To,
+				Amount: tx.Amount,
+				Type:   txType,
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}))
+
+	// Get transaction history
+	mux.HandleFunc("/history/", enableCORS(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		addresses := wallets.GetAddresses()
-		json.NewEncoder(w).Encode(map[string][]string{"addresses": addresses})
-	}))
+		// Skip "/history/" prefix to get the address
+		path := r.URL.Path[len("/history/"):]
 
-	// Blockchain operations (create and view)
-	mux.HandleFunc("/blockchain", enableCORS(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost:
-			// Create blockchain
-			var req CreateBlockchainRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "Invalid request body", http.StatusBadRequest)
-				return
-			}
-
-			if !blockchain.ValidateAddress(req.Address) {
-				http.Error(w, "Invalid address", http.StatusBadRequest)
-				return
-			}
-
-			bc := blockchain.CreateBlockchain(req.Address)
-			defer bc.DB.Close()
-
-			json.NewEncoder(w).Encode(map[string]string{"message": "Blockchain created successfully"})
-
-		case http.MethodGet:
-			// View blockchain
-			bc := blockchain.NewBlockchain()
-			defer bc.DB.Close()
-
-			bci := bc.Iterator()
-
-			var blocks []map[string]interface{}
-			for {
-				block := bci.Next()
-
-				var transactions []map[string]interface{}
-				for _, tx := range block.Transactions {
-					transactions = append(transactions, map[string]interface{}{
-						"id":   string(tx.ID),
-						"vin":  tx.Vin,
-						"vout": tx.Vout,
-					})
-				}
-
-				blocks = append(blocks, map[string]interface{}{
-					"hash":         string(block.Hash),
-					"transactions": transactions,
-					"timestamp":    block.Timestamp,
-				})
-
-				if len(block.PrevBlockHash) == 0 {
-					break
-				}
-			}
-
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"blocks": blocks,
-			})
-
-		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		address := path
+		if address == "" {
+			http.Error(w, "Address parameter is required", http.StatusBadRequest)
+			return
 		}
+
+		if !common.IsHexAddress(address) {
+			http.Error(w, "Invalid Ethereum address format", http.StatusBadRequest)
+			return
+		}
+
+		history, err := s.bc.GetTransactionHistory(address)
+		if err != nil {
+			http.Error(w, "Failed to get transaction history: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(TransactionHistoryResponse{
+			Address: address,
+			History: history,
+		})
 	}))
 
-	// Send coins
+	// Send transaction
 	mux.HandleFunc("/transaction", enableCORS(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -278,8 +206,8 @@ func (s *Server) Start() {
 		}
 
 		// Validate request fields
-		if req.PrivateKey == "" || req.ToAddress == "" {
-			http.Error(w, "PrivateKey and ToAddress are required", http.StatusBadRequest)
+		if req.PrivateKey == "" || req.ToAddress == "" || req.FromAddress == "" {
+			http.Error(w, "PrivateKey, FromAddress and ToAddress are required", http.StatusBadRequest)
 			return
 		}
 
@@ -288,23 +216,13 @@ func (s *Server) Start() {
 			return
 		}
 
-		if !blockchain.ValidateAddress(req.ToAddress) {
-			http.Error(w, "Invalid ToAddress", http.StatusBadRequest)
+		if !common.IsHexAddress(req.ToAddress) {
+			http.Error(w, "Invalid destination Ethereum address format", http.StatusBadRequest)
 			return
 		}
-
-		// Create wallet from private key
-		wallet, err := blockchain.NewWalletFromPrivateKey(req.PrivateKey)
-		if err != nil {
-			http.Error(w, "Invalid private key: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		// Get sender's address
-		fromAddress := string(wallet.GetAddress())
 
 		// Create the transaction
-		tx := blockchain.NewUTXOTransaction(fromAddress, req.ToAddress, req.Amount, s.bc)
+		tx := blockchain.NewUTXOTransaction(req.PrivateKey, req.FromAddress, req.ToAddress, req.Amount, s.bc)
 		if tx == nil {
 			http.Error(w, "Failed to create transaction: insufficient funds", http.StatusBadRequest)
 			return
@@ -313,56 +231,17 @@ func (s *Server) Start() {
 		// Add transaction to mempool
 		s.bc.AddTransaction(tx)
 
+		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"message": "Transaction added to mempool",
 			"details": map[string]interface{}{
 				"transaction": map[string]interface{}{
-					"from":   fromAddress,
+					"from":   req.FromAddress,
 					"to":     req.ToAddress,
 					"amount": req.Amount,
 				},
 			},
 		})
-	}))
-
-	mux.HandleFunc("/transactions", enableCORS(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		transactions := s.bc.GetAllTransactions()
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(transactions)
-	}))
-
-	// Transaction history
-	mux.HandleFunc("/transaction/history/", enableCORS(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		// Extract address from URL path
-		address := r.URL.Path[len("/transaction/history/"):]
-		if address == "" {
-			http.Error(w, "Address parameter is required", http.StatusBadRequest)
-			return
-		}
-
-		history, err := s.bc.GetTransactionHistory(address)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		response := TransactionHistoryResponse{
-			Address: address,
-			History: history,
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
 	}))
 
 	log.Printf("Server starting on port %s\n", s.port)

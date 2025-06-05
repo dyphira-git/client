@@ -1,118 +1,97 @@
 package blockchain
 
 import (
-	"bytes"
 	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
-	"log"
-	"math/big"
+	"fmt"
+	"strings"
 
-	"golang.org/x/crypto/ripemd160"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
-const version = byte(0x00)
-const addressChecksumLen = 4
-
-// Wallet stores private and public keys
+// Wallet stores private and public keys for Ethereum-style addresses
 type Wallet struct {
-	PrivateKey ecdsa.PrivateKey
+	PrivateKey *ecdsa.PrivateKey
 	PublicKey  []byte
+	Address    common.Address
 }
 
-// NewWallet creates and returns a Wallet
-func NewWallet() *Wallet {
-	private, public := newKeyPair()
-	wallet := Wallet{private, public}
-
-	return &wallet
-}
-
-// GetAddress returns wallet address
-func (w *Wallet) GetAddress() []byte {
-	pubKeyHash := HashPubKey(w.PublicKey)
-
-	versionedPayload := append([]byte{version}, pubKeyHash...)
-	checksum := checksum(versionedPayload)
-
-	fullPayload := append(versionedPayload, checksum...)
-	address := Base58Encode(fullPayload)
-
-	return address
-}
-
-// HashPubKey hashes public key
-func HashPubKey(pubKey []byte) []byte {
-	publicSHA256 := sha256.Sum256(pubKey)
-
-	RIPEMD160Hasher := ripemd160.New()
-	_, err := RIPEMD160Hasher.Write(publicSHA256[:])
-	if err != nil {
-		log.Panic(err)
-	}
-	publicRIPEMD160 := RIPEMD160Hasher.Sum(nil)
-
-	return publicRIPEMD160
-}
-
-// ValidateAddress check if address if valid
-func ValidateAddress(address string) bool {
-	pubKeyHash := Base58Decode([]byte(address))
-	actualChecksum := pubKeyHash[len(pubKeyHash)-addressChecksumLen:]
-	version := pubKeyHash[0]
-	pubKeyHash = pubKeyHash[1 : len(pubKeyHash)-addressChecksumLen]
-	targetChecksum := checksum(append([]byte{version}, pubKeyHash...))
-
-	return bytes.Equal(actualChecksum, targetChecksum)
-}
-
-// Checksum generates a checksum for a public key
-func checksum(payload []byte) []byte {
-	firstSHA := sha256.Sum256(payload)
-	secondSHA := sha256.Sum256(firstSHA[:])
-
-	return secondSHA[:addressChecksumLen]
-}
-
-func newKeyPair() (ecdsa.PrivateKey, []byte) {
-	curve := elliptic.P256()
-	private, err := ecdsa.GenerateKey(curve, rand.Reader)
-	if err != nil {
-		log.Panic(err)
-	}
-	pubKey := append(private.PublicKey.X.Bytes(), private.PublicKey.Y.Bytes()...)
-
-	return *private, pubKey
-}
-
-// NewWalletFromPrivateKey creates a wallet from an existing private key
+// NewWalletFromPrivateKey creates a wallet from an existing private key hex string
 func NewWalletFromPrivateKey(privateKeyHex string) (*Wallet, error) {
-	// Decode the private key from hex
-	privateKeyBytes, err := hex.DecodeString(privateKeyHex)
+	// Remove 0x prefix if present
+	privateKeyHex = strings.TrimPrefix(privateKeyHex, "0x")
+
+	// Parse the private key
+	privateKey, err := crypto.HexToECDSA(privateKeyHex)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("invalid private key: %v", err)
 	}
 
-	// Create big.Int from private key bytes
-	privateKeyInt := new(big.Int).SetBytes(privateKeyBytes)
+	// Get public key
+	publicKey := privateKey.Public()
+	publicKeyECDSA, ok := publicKey.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("error casting public key to ECDSA")
+	}
 
-	// Create the private key structure
-	curve := elliptic.P256()
-	privateKey := new(ecdsa.PrivateKey)
-	privateKey.D = privateKeyInt
-	privateKey.Curve = curve
+	// Get public key bytes
+	publicKeyBytes := crypto.FromECDSAPub(publicKeyECDSA)
 
-	// Generate the public key
-	privateKey.PublicKey.X, privateKey.PublicKey.Y = curve.ScalarBaseMult(privateKeyInt.Bytes())
+	// Get Ethereum address
+	address := crypto.PubkeyToAddress(*publicKeyECDSA)
 
-	// Create the wallet
-	pubKey := append(privateKey.PublicKey.X.Bytes(), privateKey.PublicKey.Y.Bytes()...)
 	wallet := &Wallet{
-		PrivateKey: *privateKey,
-		PublicKey:  pubKey,
+		PrivateKey: privateKey,
+		PublicKey:  publicKeyBytes,
+		Address:    address,
 	}
 
 	return wallet, nil
+}
+
+// GetAddress returns the wallet's Ethereum address as a hex string with 0x prefix
+func (w *Wallet) GetAddress() string {
+	return w.Address.Hex()
+}
+
+// GetPrivateKey returns the wallet's private key as a hex string with 0x prefix
+func (w *Wallet) GetPrivateKey() string {
+	return "0x" + hex.EncodeToString(crypto.FromECDSA(w.PrivateKey))
+}
+
+// ValidateAddress checks if the given address is a valid Ethereum address
+func ValidateAddress(address string) bool {
+	return common.IsHexAddress(address)
+}
+
+// Sign signs the given data with the wallet's private key
+func (w *Wallet) Sign(data []byte) ([]byte, error) {
+	// Hash the data first
+	hash := crypto.Keccak256Hash(data)
+
+	// Sign the hash
+	signature, err := crypto.Sign(hash.Bytes(), w.PrivateKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign data: %v", err)
+	}
+
+	return signature, nil
+}
+
+// VerifySignature verifies if the signature was signed by the given address
+func VerifySignature(data []byte, signature []byte, address common.Address) bool {
+	// Hash the data
+	hash := crypto.Keccak256Hash(data)
+
+	// Get public key from signature
+	sigPublicKey, err := crypto.Ecrecover(hash.Bytes(), signature)
+	if err != nil {
+		return false
+	}
+
+	// Convert to address
+	recoveredAddress := common.BytesToAddress(crypto.Keccak256(sigPublicKey[1:])[12:])
+
+	return address == recoveredAddress
 }
