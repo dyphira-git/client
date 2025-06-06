@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/boltdb/bolt"
@@ -28,7 +29,7 @@ func init() {
 }
 
 const blocksBucket = "blocks"
-const genesisCoinbaseData = "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks"
+const genesisCoinbaseData = "Dyphira Genesis Block"
 
 // Blockchain represents a blockchain
 type Blockchain struct {
@@ -46,7 +47,8 @@ func CreateBlockchain(address string) *Blockchain {
 
 	var tip []byte
 
-	cbtx := NewCoinbaseTx(address, genesisCoinbaseData)
+	// Create genesis block with 50 DYP reward
+	cbtx := NewCoinbaseTx(address, genesisCoinbaseData, true, 0)
 	genesis := NewGenesisBlock(cbtx)
 
 	db, err := bolt.Open(dbFile, 0600, nil)
@@ -99,7 +101,7 @@ func NewBlockchain() *Blockchain {
 		b := tx.Bucket([]byte(blocksBucket))
 
 		if b == nil {
-			genesis := NewGenesisBlock(NewCoinbaseTx("Genesis", genesisCoinbaseData))
+			genesis := NewGenesisBlock(NewCoinbaseTx("Genesis", genesisCoinbaseData, true, 0))
 			b, err := tx.CreateBucket([]byte(blocksBucket))
 			if err != nil {
 				log.Panic(err)
@@ -285,10 +287,10 @@ func (bc *Blockchain) FindUnspentTransactions(address string) []Transaction {
 }
 
 // FindSpendableOutputs finds and returns unspent outputs to reference in inputs
-func (bc *Blockchain) FindSpendableOutputs(address string, amount int) (int, map[string][]int) {
+func (bc *Blockchain) FindSpendableOutputs(address string, amount float32) (float32, map[string][]int) {
 	unspentOutputs := make(map[string][]int)
 	unspentTXs := bc.FindUnspentTransactions(address)
-	accumulated := 0
+	accumulated := float32(0)
 
 Work:
 	for _, tx := range unspentTXs {
@@ -517,13 +519,14 @@ func (bc *Blockchain) GetAllTransactions() []Transaction {
 
 // TransactionHistoryItem represents a single transaction in the history
 type TransactionHistoryItem struct {
-	TxID        string `json:"txId"`
-	From        string `json:"from"`
-	To          string `json:"to"`
-	Amount      int64  `json:"amount"`
-	BlockHeight int    `json:"blockHeight"`
-	Timestamp   int64  `json:"timestamp"`
-	Type        string `json:"type"` // "sent", "received", or "mining_reward"
+	TxID        string  `json:"txId"`
+	From        string  `json:"from"`
+	To          string  `json:"to"`
+	Amount      float32 `json:"amount"`
+	Fee         float32 `json:"fee"`
+	BlockHeight int     `json:"blockHeight"`
+	Timestamp   int64   `json:"timestamp"`
+	Type        string  `json:"type"` // "sent", "received", or "mining_reward"
 }
 
 // GetTransactionHistory returns the transaction history for a given address
@@ -573,6 +576,7 @@ func (bc *Blockchain) GetTransactionHistory(address string) ([]TransactionHistor
 					From:        tx.From,
 					To:          tx.To,
 					Amount:      tx.Amount,
+					Fee:         tx.Fee,
 					BlockHeight: block.Height,
 					Timestamp:   block.Timestamp,
 					Type:        txType,
@@ -586,16 +590,24 @@ func (bc *Blockchain) GetTransactionHistory(address string) ([]TransactionHistor
 		}
 	}
 
+	// Sort transactions by block height and timestamp
+	sort.Slice(history, func(i, j int) bool {
+		if history[i].BlockHeight == history[j].BlockHeight {
+			return history[i].Timestamp < history[j].Timestamp
+		}
+		return history[i].BlockHeight < history[j].BlockHeight
+	})
+
 	return history, nil
 }
 
 // GetBalance returns the balance of an address
-func (bc *Blockchain) GetBalance(address string) int {
+func (bc *Blockchain) GetBalance(address string) float32 {
 	if !common.IsHexAddress(address) {
 		return 0
 	}
 
-	balance := 0
+	balance := float32(0)
 	unspentTXs := bc.FindUnspentTransactions(address)
 
 	for _, tx := range unspentTXs {

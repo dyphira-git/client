@@ -315,11 +315,12 @@ type Transaction struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	From          string                 `protobuf:"bytes,1,opt,name=from,proto3" json:"from,omitempty"` // Ethereum address
 	To            string                 `protobuf:"bytes,2,opt,name=to,proto3" json:"to,omitempty"`     // Ethereum address
-	Amount        int64                  `protobuf:"varint,3,opt,name=amount,proto3" json:"amount,omitempty"`
-	Signature     []byte                 `protobuf:"bytes,4,opt,name=signature,proto3" json:"signature,omitempty"`
-	TransactionId []byte                 `protobuf:"bytes,5,opt,name=transaction_id,json=transactionId,proto3" json:"transaction_id,omitempty"`
-	Vin           []*TXInput             `protobuf:"bytes,6,rep,name=vin,proto3" json:"vin,omitempty"`
-	Vout          []*TXOutput            `protobuf:"bytes,7,rep,name=vout,proto3" json:"vout,omitempty"`
+	Amount        float32                `protobuf:"fixed32,3,opt,name=amount,proto3" json:"amount,omitempty"`
+	Fee           float32                `protobuf:"fixed32,4,opt,name=fee,proto3" json:"fee,omitempty"` // Transaction fee
+	Signature     []byte                 `protobuf:"bytes,5,opt,name=signature,proto3" json:"signature,omitempty"`
+	TransactionId []byte                 `protobuf:"bytes,6,opt,name=transaction_id,json=transactionId,proto3" json:"transaction_id,omitempty"`
+	Vin           []*TXInput             `protobuf:"bytes,7,rep,name=vin,proto3" json:"vin,omitempty"`
+	Vout          []*TXOutput            `protobuf:"bytes,8,rep,name=vout,proto3" json:"vout,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -368,9 +369,16 @@ func (x *Transaction) GetTo() string {
 	return ""
 }
 
-func (x *Transaction) GetAmount() int64 {
+func (x *Transaction) GetAmount() float32 {
 	if x != nil {
 		return x.Amount
+	}
+	return 0
+}
+
+func (x *Transaction) GetFee() float32 {
+	if x != nil {
+		return x.Fee
 	}
 	return 0
 }
@@ -475,7 +483,7 @@ func (x *TXInput) GetPubKey() []byte {
 // Transaction Output
 type TXOutput struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Value         int32                  `protobuf:"varint,1,opt,name=value,proto3" json:"value,omitempty"`
+	Value         float32                `protobuf:"fixed32,1,opt,name=value,proto3" json:"value,omitempty"`
 	Address       string                 `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"` // Ethereum address
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -511,7 +519,7 @@ func (*TXOutput) Descriptor() ([]byte, []int) {
 	return file_proto_mining_proto_rawDescGZIP(), []int{7}
 }
 
-func (x *TXOutput) GetValue() int32 {
+func (x *TXOutput) GetValue() float32 {
 	if x != nil {
 		return x.Value
 	}
@@ -709,21 +717,21 @@ var File_proto_mining_proto protoreflect.FileDescriptor
 
 const file_proto_mining_proto_rawDesc = "" +
 	"\n" +
-	"\x12proto/mining.proto\x12\x06mining\";\n" +
+	"\x12proto/mining.proto\x12\x05proto\";\n" +
 	"\x14BlockTemplateRequest\x12#\n" +
-	"\rminer_address\x18\x01 \x01(\tR\fminerAddress\"\x9e\x01\n" +
+	"\rminer_address\x18\x01 \x01(\tR\fminerAddress\"\x9d\x01\n" +
 	"\x05Block\x12\x1c\n" +
 	"\ttimestamp\x18\x01 \x01(\x03R\ttimestamp\x12&\n" +
 	"\x0fprev_block_hash\x18\x02 \x01(\fR\rprevBlockHash\x12\x16\n" +
-	"\x06height\x18\x03 \x01(\x05R\x06height\x127\n" +
-	"\ftransactions\x18\x04 \x03(\v2\x13.mining.TransactionR\ftransactions\"\\\n" +
-	"\x15BlockTemplateResponse\x12#\n" +
-	"\x05block\x18\x01 \x01(\v2\r.mining.BlockR\x05block\x12\x1e\n" +
+	"\x06height\x18\x03 \x01(\x05R\x06height\x126\n" +
+	"\ftransactions\x18\x04 \x03(\v2\x12.proto.TransactionR\ftransactions\"[\n" +
+	"\x15BlockTemplateResponse\x12\"\n" +
+	"\x05block\x18\x01 \x01(\v2\f.proto.BlockR\x05block\x12\x1e\n" +
 	"\n" +
 	"difficulty\x18\x02 \x01(\x05R\n" +
-	"difficulty\"n\n" +
-	"\x12SubmitBlockRequest\x12#\n" +
-	"\x05block\x18\x01 \x01(\v2\r.mining.BlockR\x05block\x12\x1d\n" +
+	"difficulty\"m\n" +
+	"\x12SubmitBlockRequest\x12\"\n" +
+	"\x05block\x18\x01 \x01(\v2\f.proto.BlockR\x05block\x12\x1d\n" +
 	"\n" +
 	"block_hash\x18\x02 \x01(\fR\tblockHash\x12\x14\n" +
 	"\x05nonce\x18\x03 \x01(\x05R\x05nonce\"s\n" +
@@ -731,22 +739,23 @@ const file_proto_mining_proto_rawDesc = "" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x1d\n" +
 	"\n" +
 	"block_hash\x18\x02 \x01(\tR\tblockHash\x12#\n" +
-	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage\"\xd7\x01\n" +
+	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage\"\xe7\x01\n" +
 	"\vTransaction\x12\x12\n" +
 	"\x04from\x18\x01 \x01(\tR\x04from\x12\x0e\n" +
 	"\x02to\x18\x02 \x01(\tR\x02to\x12\x16\n" +
-	"\x06amount\x18\x03 \x01(\x03R\x06amount\x12\x1c\n" +
-	"\tsignature\x18\x04 \x01(\fR\tsignature\x12%\n" +
-	"\x0etransaction_id\x18\x05 \x01(\fR\rtransactionId\x12!\n" +
-	"\x03vin\x18\x06 \x03(\v2\x0f.mining.TXInputR\x03vin\x12$\n" +
-	"\x04vout\x18\a \x03(\v2\x10.mining.TXOutputR\x04vout\"h\n" +
+	"\x06amount\x18\x03 \x01(\x02R\x06amount\x12\x10\n" +
+	"\x03fee\x18\x04 \x01(\x02R\x03fee\x12\x1c\n" +
+	"\tsignature\x18\x05 \x01(\fR\tsignature\x12%\n" +
+	"\x0etransaction_id\x18\x06 \x01(\fR\rtransactionId\x12 \n" +
+	"\x03vin\x18\a \x03(\v2\x0e.proto.TXInputR\x03vin\x12#\n" +
+	"\x04vout\x18\b \x03(\v2\x0f.proto.TXOutputR\x04vout\"h\n" +
 	"\aTXInput\x12\x12\n" +
 	"\x04txid\x18\x01 \x01(\fR\x04txid\x12\x12\n" +
 	"\x04vout\x18\x02 \x01(\x05R\x04vout\x12\x1c\n" +
 	"\tsignature\x18\x03 \x01(\fR\tsignature\x12\x17\n" +
 	"\apub_key\x18\x04 \x01(\fR\x06pubKey\":\n" +
 	"\bTXOutput\x12\x14\n" +
-	"\x05value\x18\x01 \x01(\x05R\x05value\x12\x18\n" +
+	"\x05value\x18\x01 \x01(\x02R\x05value\x12\x18\n" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress\"\x19\n" +
 	"\x17BlockchainStatusRequest\"~\n" +
 	"\x18BlockchainStatusResponse\x12\x16\n" +
@@ -755,14 +764,14 @@ const file_proto_mining_proto_rawDesc = "" +
 	"\n" +
 	"difficulty\x18\x03 \x01(\x05R\n" +
 	"difficulty\"\x1c\n" +
-	"\x1aPendingTransactionsRequest\"V\n" +
-	"\x1bPendingTransactionsResponse\x127\n" +
-	"\ftransactions\x18\x01 \x03(\v2\x13.mining.TransactionR\ftransactions2\xed\x02\n" +
-	"\rMiningService\x12Q\n" +
-	"\x10GetBlockTemplate\x12\x1c.mining.BlockTemplateRequest\x1a\x1d.mining.BlockTemplateResponse\"\x00\x12H\n" +
-	"\vSubmitBlock\x12\x1a.mining.SubmitBlockRequest\x1a\x1b.mining.SubmitBlockResponse\"\x00\x12Z\n" +
-	"\x13GetBlockchainStatus\x12\x1f.mining.BlockchainStatusRequest\x1a .mining.BlockchainStatusResponse\"\x00\x12c\n" +
-	"\x16GetPendingTransactions\x12\".mining.PendingTransactionsRequest\x1a#.mining.PendingTransactionsResponse\"\x00B\x11Z\x0fdyp_chain/protob\x06proto3"
+	"\x1aPendingTransactionsRequest\"U\n" +
+	"\x1bPendingTransactionsResponse\x126\n" +
+	"\ftransactions\x18\x01 \x03(\v2\x12.proto.TransactionR\ftransactions2\xe5\x02\n" +
+	"\rMiningService\x12O\n" +
+	"\x10GetBlockTemplate\x12\x1b.proto.BlockTemplateRequest\x1a\x1c.proto.BlockTemplateResponse\"\x00\x12F\n" +
+	"\vSubmitBlock\x12\x19.proto.SubmitBlockRequest\x1a\x1a.proto.SubmitBlockResponse\"\x00\x12X\n" +
+	"\x13GetBlockchainStatus\x12\x1e.proto.BlockchainStatusRequest\x1a\x1f.proto.BlockchainStatusResponse\"\x00\x12a\n" +
+	"\x16GetPendingTransactions\x12!.proto.PendingTransactionsRequest\x1a\".proto.PendingTransactionsResponse\"\x00B\tZ\a./protob\x06proto3"
 
 var (
 	file_proto_mining_proto_rawDescOnce sync.Once
@@ -778,34 +787,34 @@ func file_proto_mining_proto_rawDescGZIP() []byte {
 
 var file_proto_mining_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_proto_mining_proto_goTypes = []any{
-	(*BlockTemplateRequest)(nil),        // 0: mining.BlockTemplateRequest
-	(*Block)(nil),                       // 1: mining.Block
-	(*BlockTemplateResponse)(nil),       // 2: mining.BlockTemplateResponse
-	(*SubmitBlockRequest)(nil),          // 3: mining.SubmitBlockRequest
-	(*SubmitBlockResponse)(nil),         // 4: mining.SubmitBlockResponse
-	(*Transaction)(nil),                 // 5: mining.Transaction
-	(*TXInput)(nil),                     // 6: mining.TXInput
-	(*TXOutput)(nil),                    // 7: mining.TXOutput
-	(*BlockchainStatusRequest)(nil),     // 8: mining.BlockchainStatusRequest
-	(*BlockchainStatusResponse)(nil),    // 9: mining.BlockchainStatusResponse
-	(*PendingTransactionsRequest)(nil),  // 10: mining.PendingTransactionsRequest
-	(*PendingTransactionsResponse)(nil), // 11: mining.PendingTransactionsResponse
+	(*BlockTemplateRequest)(nil),        // 0: proto.BlockTemplateRequest
+	(*Block)(nil),                       // 1: proto.Block
+	(*BlockTemplateResponse)(nil),       // 2: proto.BlockTemplateResponse
+	(*SubmitBlockRequest)(nil),          // 3: proto.SubmitBlockRequest
+	(*SubmitBlockResponse)(nil),         // 4: proto.SubmitBlockResponse
+	(*Transaction)(nil),                 // 5: proto.Transaction
+	(*TXInput)(nil),                     // 6: proto.TXInput
+	(*TXOutput)(nil),                    // 7: proto.TXOutput
+	(*BlockchainStatusRequest)(nil),     // 8: proto.BlockchainStatusRequest
+	(*BlockchainStatusResponse)(nil),    // 9: proto.BlockchainStatusResponse
+	(*PendingTransactionsRequest)(nil),  // 10: proto.PendingTransactionsRequest
+	(*PendingTransactionsResponse)(nil), // 11: proto.PendingTransactionsResponse
 }
 var file_proto_mining_proto_depIdxs = []int32{
-	5,  // 0: mining.Block.transactions:type_name -> mining.Transaction
-	1,  // 1: mining.BlockTemplateResponse.block:type_name -> mining.Block
-	1,  // 2: mining.SubmitBlockRequest.block:type_name -> mining.Block
-	6,  // 3: mining.Transaction.vin:type_name -> mining.TXInput
-	7,  // 4: mining.Transaction.vout:type_name -> mining.TXOutput
-	5,  // 5: mining.PendingTransactionsResponse.transactions:type_name -> mining.Transaction
-	0,  // 6: mining.MiningService.GetBlockTemplate:input_type -> mining.BlockTemplateRequest
-	3,  // 7: mining.MiningService.SubmitBlock:input_type -> mining.SubmitBlockRequest
-	8,  // 8: mining.MiningService.GetBlockchainStatus:input_type -> mining.BlockchainStatusRequest
-	10, // 9: mining.MiningService.GetPendingTransactions:input_type -> mining.PendingTransactionsRequest
-	2,  // 10: mining.MiningService.GetBlockTemplate:output_type -> mining.BlockTemplateResponse
-	4,  // 11: mining.MiningService.SubmitBlock:output_type -> mining.SubmitBlockResponse
-	9,  // 12: mining.MiningService.GetBlockchainStatus:output_type -> mining.BlockchainStatusResponse
-	11, // 13: mining.MiningService.GetPendingTransactions:output_type -> mining.PendingTransactionsResponse
+	5,  // 0: proto.Block.transactions:type_name -> proto.Transaction
+	1,  // 1: proto.BlockTemplateResponse.block:type_name -> proto.Block
+	1,  // 2: proto.SubmitBlockRequest.block:type_name -> proto.Block
+	6,  // 3: proto.Transaction.vin:type_name -> proto.TXInput
+	7,  // 4: proto.Transaction.vout:type_name -> proto.TXOutput
+	5,  // 5: proto.PendingTransactionsResponse.transactions:type_name -> proto.Transaction
+	0,  // 6: proto.MiningService.GetBlockTemplate:input_type -> proto.BlockTemplateRequest
+	3,  // 7: proto.MiningService.SubmitBlock:input_type -> proto.SubmitBlockRequest
+	8,  // 8: proto.MiningService.GetBlockchainStatus:input_type -> proto.BlockchainStatusRequest
+	10, // 9: proto.MiningService.GetPendingTransactions:input_type -> proto.PendingTransactionsRequest
+	2,  // 10: proto.MiningService.GetBlockTemplate:output_type -> proto.BlockTemplateResponse
+	4,  // 11: proto.MiningService.SubmitBlock:output_type -> proto.SubmitBlockResponse
+	9,  // 12: proto.MiningService.GetBlockchainStatus:output_type -> proto.BlockchainStatusResponse
+	11, // 13: proto.MiningService.GetPendingTransactions:output_type -> proto.PendingTransactionsResponse
 	10, // [10:14] is the sub-list for method output_type
 	6,  // [6:10] is the sub-list for method input_type
 	6,  // [6:6] is the sub-list for extension type_name

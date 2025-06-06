@@ -15,12 +15,19 @@ import (
 const port = ":50051"
 
 func main() {
-	loadEnv()
+	// Try to load .env file but don't fail if it doesn't exist
+	_ = godotenv.Load()
+
+	// Check if GENESIS_ADDRESS is set
+	genesisAddr := os.Getenv("GENESIS_ADDRESS")
+	if genesisAddr == "" {
+		log.Fatal("GENESIS_ADDRESS environment variable is required")
+	}
 
 	var bc *blockchain.Blockchain
 
 	if _, err := os.Stat("blockchain.db"); os.IsNotExist(err) {
-		bc = blockchain.CreateBlockchain(os.Getenv("GENESIS_ADDRESS"))
+		bc = blockchain.CreateBlockchain(genesisAddr)
 	} else {
 		bc = blockchain.NewBlockchain()
 	}
@@ -41,12 +48,5 @@ func main() {
 	log.Printf("Mining server listening at %v", lis.Addr())
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
-	}
-}
-
-func loadEnv() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error loading .env file")
 	}
 }

@@ -45,15 +45,16 @@ type ErrorResponse struct {
 }
 
 type BalanceResponse struct {
-	Address string `json:"address"`
-	Balance int    `json:"balance"`
+	Address string  `json:"address"`
+	Balance float32 `json:"balance"`
 }
 
 type SendRequest struct {
-	PrivateKey  string `json:"private_key"`
-	FromAddress string `json:"from"`
-	ToAddress   string `json:"to"`
-	Amount      int    `json:"amount"`
+	PrivateKey  string  `json:"private_key"`
+	FromAddress string  `json:"from"`
+	ToAddress   string  `json:"to"`
+	Amount      float32 `json:"amount"`
+	Fee         float32 `json:"fee"`
 }
 
 type CreateBlockchainRequest struct {
@@ -77,13 +78,13 @@ type TransactionHistoryResponse struct {
 
 // TransactionResponse represents a single transaction in the response
 type TransactionResponse struct {
-	TxID        string `json:"txId"`
-	From        string `json:"from"`
-	To          string `json:"to"`
-	Amount      int64  `json:"amount"`
-	BlockHeight int    `json:"blockHeight"`
-	Timestamp   int64  `json:"timestamp"`
-	Type        string `json:"type"`
+	TxID        string  `json:"txId"`
+	From        string  `json:"from"`
+	To          string  `json:"to"`
+	Amount      float32 `json:"amount"`
+	BlockHeight int     `json:"blockHeight"`
+	Timestamp   int64   `json:"timestamp"`
+	Type        string  `json:"type"`
 }
 
 // AllTransactionsResponse represents the response structure for all transactions
@@ -216,13 +217,18 @@ func (s *Server) Start() {
 			return
 		}
 
+		if req.Fee < 0 {
+			http.Error(w, "Fee cannot be negative", http.StatusBadRequest)
+			return
+		}
+
 		if !common.IsHexAddress(req.ToAddress) {
 			http.Error(w, "Invalid destination Ethereum address format", http.StatusBadRequest)
 			return
 		}
 
 		// Create the transaction
-		tx := blockchain.NewUTXOTransaction(req.PrivateKey, req.FromAddress, req.ToAddress, req.Amount, s.bc)
+		tx := blockchain.NewUTXOTransaction(req.PrivateKey, req.FromAddress, req.ToAddress, req.Amount, req.Fee, s.bc)
 		if tx == nil {
 			http.Error(w, "Failed to create transaction: insufficient funds", http.StatusBadRequest)
 			return
@@ -239,6 +245,7 @@ func (s *Server) Start() {
 					"from":   req.FromAddress,
 					"to":     req.ToAddress,
 					"amount": req.Amount,
+					"fee":    req.Fee,
 				},
 			},
 		})

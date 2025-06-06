@@ -60,7 +60,7 @@ func (cli *CLI) printChain() {
 	}
 }
 
-func (cli *CLI) send(privateKey, from, to string, amount int) {
+func (cli *CLI) send(privateKey, from, to string, amount, fee float32) {
 	if !common.IsHexAddress(from) {
 		log.Panic("ERROR: Sender address is not valid")
 	}
@@ -71,7 +71,7 @@ func (cli *CLI) send(privateKey, from, to string, amount int) {
 	bc := blockchain.NewBlockchain()
 	defer bc.DB.Close()
 
-	tx := blockchain.NewUTXOTransaction(privateKey, from, to, amount, bc)
+	tx := blockchain.NewUTXOTransaction(privateKey, from, to, amount, fee, bc)
 	bc.AddTransaction(tx) // Add to mempool instead of directly creating a block
 	fmt.Println("Success! Transaction added to mempool.")
 }

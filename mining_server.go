@@ -6,12 +6,16 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	blockchain "dyp_chain/blockchain"
 	pb "dyp_chain/proto"
 
+	"github.com/boltdb/bolt"
 	"github.com/ethereum/go-ethereum/common"
 )
+
+const blocksBucket = "blocks"
 
 type miningServer struct {
 	pb.UnimplementedMiningServiceServer
@@ -43,11 +47,13 @@ func (s *miningServer) GetBlockTemplate(ctx context.Context, req *pb.BlockTempla
 	// Check if there are any non-coinbase transactions
 	hasRealTransactions := false
 	realTxCount := 0
+	totalFees := float32(0)
 	for _, tx := range pendingTxs {
 		if !tx.IsCoinbase() {
 			hasRealTransactions = true
 			realTxCount++
-			log.Printf("[Server] Found real transaction: From=%s, To=%s, Amount=%d", tx.From, tx.To, tx.Amount)
+			totalFees += tx.Fee
+			log.Printf("[Server] Found real transaction: From=%s, To=%s, Amount=%f, Fee=%f", tx.From, tx.To, tx.Amount, tx.Fee)
 		}
 	}
 
@@ -55,15 +61,36 @@ func (s *miningServer) GetBlockTemplate(ctx context.Context, req *pb.BlockTempla
 		log.Printf("[Server] No real transactions found in mempool")
 		return nil, fmt.Errorf("no transactions available for mining")
 	}
-	log.Printf("[Server] Found %d real transactions to mine", realTxCount)
+	log.Printf("[Server] Found %d real transactions to mine, total fees: %f", realTxCount, totalFees)
 
 	transactions := make([]*blockchain.Transaction, len(pendingTxs))
 	copy(transactions, pendingTxs)
 
+	// Check if this is genesis block by checking if any blocks exist
+	var isGenesis bool
+	err := s.blockchain.DB.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(blocksBucket))
+		if b == nil {
+			isGenesis = true
+			return nil
+		}
+		c := b.Cursor()
+		k, _ := c.First()
+		isGenesis = k == nil
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to check blockchain state: %v", err)
+	}
+
 	// Add mining reward transaction
-	reward := blockchain.NewCoinbaseTx(req.MinerAddress, "Mining reward")
+	reward := blockchain.NewCoinbaseTx(req.MinerAddress, "Mining reward", isGenesis, totalFees)
 	transactions = append(transactions, reward)
-	log.Printf("[Server] Added coinbase reward transaction for miner: %s", req.MinerAddress)
+	if isGenesis {
+		log.Printf("[Server] Added genesis coinbase reward transaction for miner: %s, reward: %f DYP", req.MinerAddress, reward.Amount)
+	} else {
+		log.Printf("[Server] Added coinbase transaction with fees for miner: %s, fees: %f", req.MinerAddress, reward.Amount)
+	}
 
 	// Create a block template
 	block := s.blockchain.PrepareNewBlock(transactions)
@@ -83,6 +110,7 @@ func (s *miningServer) GetBlockTemplate(ctx context.Context, req *pb.BlockTempla
 			From:          tx.From,
 			To:            tx.To,
 			Amount:        tx.Amount,
+			Fee:           tx.Fee,
 			TransactionId: tx.ID,
 			Signature:     tx.Signature,
 			Vin:           make([]*pb.TXInput, len(tx.Vin)),
@@ -92,7 +120,11 @@ func (s *miningServer) GetBlockTemplate(ctx context.Context, req *pb.BlockTempla
 		// Convert Vin and Vout to protobuf format
 		if tx.IsCoinbase() {
 			// For coinbase transactions, we already have the basic fields set
-			log.Printf("[Server] Converting coinbase transaction for miner: %s", tx.To)
+			if isGenesis {
+				log.Printf("[Server] Converting genesis coinbase transaction for miner: %s, Amount=%f DYP", tx.To, tx.Amount)
+			} else {
+				log.Printf("[Server] Converting coinbase transaction with fees for miner: %s, Amount=%f", tx.To, tx.Amount)
+			}
 			pbTx.Vin = []*pb.TXInput{
 				{
 					Txid:      []byte{},
@@ -103,13 +135,13 @@ func (s *miningServer) GetBlockTemplate(ctx context.Context, req *pb.BlockTempla
 			}
 			pbTx.Vout = []*pb.TXOutput{
 				{
-					Value:   int32(tx.Amount),
+					Value:   tx.Amount,
 					Address: tx.To,
 				},
 			}
 		} else {
 			// For regular transactions, include Vin and Vout
-			log.Printf("[Server] Converting regular transaction: From=%s, To=%s, Amount=%d", tx.From, tx.To, tx.Amount)
+			log.Printf("[Server] Converting regular transaction: From=%s, To=%s, Amount=%f, Fee=%f", tx.From, tx.To, tx.Amount, tx.Fee)
 
 			// Convert inputs
 			for j, vin := range tx.Vin {
@@ -125,10 +157,10 @@ func (s *miningServer) GetBlockTemplate(ctx context.Context, req *pb.BlockTempla
 			// Convert outputs
 			for j, vout := range tx.Vout {
 				pbTx.Vout[j] = &pb.TXOutput{
-					Value:   int32(vout.Value),
+					Value:   vout.Value,
 					Address: vout.Address,
 				}
-				log.Printf("[Server] Output %d: Value=%d", j, vout.Value)
+				log.Printf("[Server] Output %d: Value=%f", j, vout.Value)
 			}
 		}
 
@@ -152,6 +184,8 @@ func (s *miningServer) SubmitBlock(ctx context.Context, req *pb.SubmitBlockReque
 	// Convert protobuf block to blockchain.Block
 	transactions := make([]*blockchain.Transaction, len(req.Block.Transactions))
 	realTxCount := 0
+	totalFees := float32(0)
+
 	for i, tx := range req.Block.Transactions {
 		// Create a new transaction with proper Vin and Vout
 		transactions[i] = &blockchain.Transaction{
@@ -159,6 +193,7 @@ func (s *miningServer) SubmitBlock(ctx context.Context, req *pb.SubmitBlockReque
 			From:      tx.From,
 			To:        tx.To,
 			Amount:    tx.Amount,
+			Fee:       tx.Fee,
 			Signature: tx.Signature,
 			Vin:       make([]blockchain.TXInput, len(tx.Vin)),
 			Vout:      make([]blockchain.TXOutput, len(tx.Vout)),
@@ -177,28 +212,33 @@ func (s *miningServer) SubmitBlock(ctx context.Context, req *pb.SubmitBlockReque
 		// Convert outputs
 		for j, vout := range tx.Vout {
 			transactions[i].Vout[j] = blockchain.TXOutput{
-				Value:   int(vout.Value),
+				Value:   vout.Value,
 				Address: vout.Address,
 			}
 		}
 
 		if tx.From == "coinbase" {
-			log.Printf("[Server] Processing coinbase transaction for miner: %s", tx.To)
+			log.Printf("[Server] Processing coinbase transaction for miner: %s, Amount=%f", tx.To, tx.Amount)
 		} else {
 			realTxCount++
-			log.Printf("[Server] Processing regular transaction: From=%s, To=%s, Amount=%d", tx.From, tx.To, tx.Amount)
+			totalFees += tx.Fee
+			log.Printf("[Server] Processing regular transaction: From=%s, To=%s, Amount=%f, Fee=%f", tx.From, tx.To, tx.Amount, tx.Fee)
 			log.Printf("[Server] Transaction has %d inputs and %d outputs", len(tx.Vin), len(tx.Vout))
 		}
 	}
-	log.Printf("[Server] Block contains %d real transactions and 1 coinbase transaction", realTxCount)
+	log.Printf("[Server] Block contains %d real transactions and 1 coinbase transaction, total fees: %f", realTxCount, totalFees)
+
+	// Get the current height from the blockchain
+	currentHeight := s.blockchain.GetHeight()
+	newHeight := currentHeight + 1
 
 	block := &blockchain.Block{
-		Timestamp:     req.Block.Timestamp,
+		Timestamp:     time.Now().Unix(), // Set current timestamp
 		Transactions:  transactions,
 		PrevBlockHash: req.Block.PrevBlockHash,
 		Hash:          req.BlockHash,
 		Nonce:         int(req.Nonce),
-		Height:        int(req.Block.Height),
+		Height:        newHeight, // Set proper height
 	}
 
 	// Verify the proof of work
@@ -264,7 +304,7 @@ func (s *miningServer) GetPendingTransactions(ctx context.Context, req *pb.Pendi
 		}
 		if tx.From != "coinbase" {
 			realTxCount++
-			log.Printf("[Server] Pending transaction %d: From=%s, To=%s, Amount=%d", i, tx.From, tx.To, tx.Amount)
+			log.Printf("[Server] Pending transaction %d: From=%s, To=%s, Amount=%f", i, tx.From, tx.To, tx.Amount)
 		}
 	}
 	log.Printf("[Server] Returning %d real transactions from mempool", realTxCount)

@@ -1,7 +1,8 @@
 syntax = "proto3";
 
-package mining;
-option go_package = "dyp_chain/proto";
+package proto;
+
+option go_package = "./proto";
 
 // Mining service definition
 service MiningService {
@@ -52,11 +53,12 @@ message SubmitBlockResponse {
 message Transaction {
   string from = 1;      // Ethereum address
   string to = 2;        // Ethereum address
-  int64 amount = 3;
-  bytes signature = 4;
-  bytes transaction_id = 5;
-  repeated TXInput vin = 6;
-  repeated TXOutput vout = 7;
+  float amount = 3;
+  float fee = 4;       // Transaction fee
+  bytes signature = 5;
+  bytes transaction_id = 6;
+  repeated TXInput vin = 7;
+  repeated TXOutput vout = 8;
 }
 
 // Transaction Input
@@ -69,7 +71,7 @@ message TXInput {
 
 // Transaction Output
 message TXOutput {
-  int32 value = 1;
+  float value = 1;
   string address = 2;   // Ethereum address
 }
 

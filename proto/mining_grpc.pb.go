@@ -19,10 +19,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	MiningService_GetBlockTemplate_FullMethodName       = "/mining.MiningService/GetBlockTemplate"
-	MiningService_SubmitBlock_FullMethodName            = "/mining.MiningService/SubmitBlock"
-	MiningService_GetBlockchainStatus_FullMethodName    = "/mining.MiningService/GetBlockchainStatus"
-	MiningService_GetPendingTransactions_FullMethodName = "/mining.MiningService/GetPendingTransactions"
+	MiningService_GetBlockTemplate_FullMethodName       = "/proto.MiningService/GetBlockTemplate"
+	MiningService_SubmitBlock_FullMethodName            = "/proto.MiningService/SubmitBlock"
+	MiningService_GetBlockchainStatus_FullMethodName    = "/proto.MiningService/GetBlockchainStatus"
+	MiningService_GetPendingTransactions_FullMethodName = "/proto.MiningService/GetPendingTransactions"
 )
 
 // MiningServiceClient is the client API for MiningService service.
@@ -222,7 +222,7 @@ func _MiningService_GetPendingTransactions_Handler(srv interface{}, ctx context.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var MiningService_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "mining.MiningService",
+	ServiceName: "proto.MiningService",
 	HandlerType: (*MiningServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{

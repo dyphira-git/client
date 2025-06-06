@@ -43,7 +43,8 @@ func (cli *CLI) Run() {
 	sendPrivateKey := sendCmd.String("privateKey", "", "The private key of the sender")
 	sendFrom := sendCmd.String("from", "", "Source wallet address")
 	sendTo := sendCmd.String("to", "", "Destination wallet address")
-	sendAmount := sendCmd.Int("amount", 0, "Amount to send")
+	sendAmount := sendCmd.Float64("amount", 0, "Amount to send")
+	sendFee := sendCmd.Float64("fee", 0, "Fee to send")
 
 	switch os.Args[1] {
 	case "createblockchain":
@@ -108,6 +109,6 @@ func (cli *CLI) Run() {
 		if !common.IsHexAddress(*sendTo) {
 			log.Panic("ERROR: Invalid destination Ethereum address format")
 		}
-		cli.send(*sendPrivateKey, *sendFrom, *sendTo, *sendAmount)
+		cli.send(*sendPrivateKey, *sendFrom, *sendTo, float32(*sendAmount), float32(*sendFee))
 	}
 }

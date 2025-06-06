@@ -12,7 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
-const MINING_REWARD = int64(50)
+const MINING_REWARD = float32(50)
 
 // Transaction represents a blockchain transaction
 type Transaction struct {
@@ -21,7 +21,8 @@ type Transaction struct {
 	Vout      []TXOutput
 	From      string
 	To        string
-	Amount    int64
+	Amount    float32
+	Fee       float32
 	Signature []byte
 }
 
@@ -46,25 +47,34 @@ func (in *TXInput) UsesKey(address string) bool {
 
 // TXOutput represents a transaction output
 type TXOutput struct {
-	Value   int
+	Value   float32
 	Address string // Ethereum address
 }
 
 // NewCoinbaseTx creates a new coinbase transaction
-func NewCoinbaseTx(to, data string) *Transaction {
+func NewCoinbaseTx(to, data string, isGenesis bool, totalFees float32) *Transaction {
 	if !common.IsHexAddress(to) {
 		log.Panic("Invalid miner address")
 	}
 
+	// Set reward based on whether this is genesis block or not
+	var reward float32
+	if isGenesis {
+		reward = MINING_REWARD // 50 DYP for genesis block
+	} else {
+		reward = totalFees // Only transaction fees for regular mining
+	}
+
 	txin := TXInput{[]byte{}, -1, nil, nil}
-	txout := NewTXOutput(int(MINING_REWARD), to)
+	txout := NewTXOutput(reward, to)
 	tx := Transaction{
 		ID:        []byte{},
 		Vin:       []TXInput{txin},
 		Vout:      []TXOutput{*txout},
 		From:      "coinbase",
 		To:        to,
-		Amount:    MINING_REWARD,
+		Amount:    reward,
+		Fee:       0,
 		Signature: []byte(data),
 	}
 	tx.ID = tx.Hash()
@@ -72,7 +82,7 @@ func NewCoinbaseTx(to, data string) *Transaction {
 }
 
 // NewUTXOTransaction creates a new transaction
-func NewUTXOTransaction(privateKeyHex, from, to string, amount int, bc *Blockchain) *Transaction {
+func NewUTXOTransaction(privateKeyHex, from, to string, amount, fee float32, bc *Blockchain) *Transaction {
 	var inputs []TXInput
 	var outputs []TXOutput
 
@@ -87,10 +97,12 @@ func NewUTXOTransaction(privateKeyHex, from, to string, amount int, bc *Blockcha
 		log.Panic(err)
 	}
 
-	acc, validOutputs := bc.FindSpendableOutputs(from, amount)
+	// Total amount needed is amount + fee
+	totalNeeded := amount + fee
+	acc, validOutputs := bc.FindSpendableOutputs(from, totalNeeded)
 
-	if acc < amount {
-		log.Panic("ERROR: Not enough funds")
+	if acc < totalNeeded {
+		log.Panic("ERROR: Not enough funds to cover amount and fee")
 	}
 
 	// Build a list of inputs
@@ -109,9 +121,9 @@ func NewUTXOTransaction(privateKeyHex, from, to string, amount int, bc *Blockcha
 	}
 
 	// Build a list of outputs
-	outputs = append(outputs, *NewTXOutput(amount, to))
-	if acc > amount {
-		outputs = append(outputs, *NewTXOutput(acc-amount, from)) // a change
+	outputs = append(outputs, *NewTXOutput(amount, to)) // Payment to recipient
+	if acc > totalNeeded {
+		outputs = append(outputs, *NewTXOutput(acc-totalNeeded, from)) // Change back to sender
 	}
 
 	tx := Transaction{
@@ -120,7 +132,8 @@ func NewUTXOTransaction(privateKeyHex, from, to string, amount int, bc *Blockcha
 		Vout:      outputs,
 		From:      from,
 		To:        to,
-		Amount:    int64(amount),
+		Amount:    amount,
+		Fee:       fee,
 		Signature: nil,
 	}
 	tx.ID = tx.Hash()
@@ -142,7 +155,7 @@ func (tx *Transaction) Hash() []byte {
 		Vout   []TXOutput
 		From   string
 		To     string
-		Amount int64
+		Amount float32
 	}{
 		Vin:    txCopy.Vin,
 		Vout:   txCopy.Vout,
@@ -242,7 +255,7 @@ func (tx *Transaction) TrimmedCopy() Transaction {
 		outputs = append(outputs, TXOutput{vout.Value, vout.Address})
 	}
 
-	txCopy := Transaction{tx.ID, inputs, outputs, tx.From, tx.To, tx.Amount, nil}
+	txCopy := Transaction{tx.ID, inputs, outputs, tx.From, tx.To, tx.Amount, tx.Fee, nil}
 
 	return txCopy
 }
@@ -266,7 +279,7 @@ func (tx Transaction) IsCoinbase() bool {
 }
 
 // NewTXOutput creates a new TXOutput
-func NewTXOutput(value int, address string) *TXOutput {
+func NewTXOutput(value float32, address string) *TXOutput {
 	if !common.IsHexAddress(address) {
 		log.Panic("Invalid address format")
 	}
