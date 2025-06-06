@@ -27,7 +27,7 @@ func (cli *CLI) getBalance(address string) {
 	defer bc.DB.Close()
 
 	balance := bc.GetBalance(address)
-	fmt.Printf("Balance of '%s': %d\n", address, balance)
+	fmt.Printf("Balance of '%s': %f\n", address, balance)
 }
 
 func (cli *CLI) printChain() {
@@ -50,7 +50,7 @@ func (cli *CLI) printChain() {
 			fmt.Printf("Transaction %x:\n", tx.ID)
 			fmt.Printf("  From:   %s\n", tx.From)
 			fmt.Printf("  To:     %s\n", tx.To)
-			fmt.Printf("  Amount: %d\n\n", tx.Amount)
+			fmt.Printf("  Amount: %f\n\n", tx.Amount)
 		}
 		fmt.Printf("\n")
 
