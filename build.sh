@@ -7,6 +7,10 @@ mkdir -p bin
 echo "Building for Linux (amd64)..."
 GOOS=linux GOARCH=amd64 go build -o bin/miner-linux-amd64 cmd/miner/main.go cmd/miner/client.go
 
+# Build for Linux (arm64)
+echo "Building for Linux (arm64)..."
+GOOS=linux GOARCH=arm64 go build -o bin/miner-linux-arm64 cmd/miner/main.go cmd/miner/client.go
+
 # Build for Windows (amd64)
 echo "Building for Windows (amd64)..."
 GOOS=windows GOARCH=amd64 go build -o bin/miner-windows-amd64.exe cmd/miner/main.go cmd/miner/client.go

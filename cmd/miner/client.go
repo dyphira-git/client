@@ -172,7 +172,7 @@ func (c *MiningClient) StartMining(minerAddress string) {
 				for _, tx := range pendingTxs.Transactions {
 					if tx.From != "coinbase" {
 						realTxCount++
-						log.Printf("[Miner] Found pending transaction: From=%s, To=%s, Amount=%d",
+						log.Printf("[Miner] Found pending transaction: From=%s, To=%s, Amount=%f",
 							tx.From, tx.To, tx.Amount)
 					}
 				}
