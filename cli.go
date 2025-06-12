@@ -78,7 +78,7 @@ func (cli *CLI) Run() {
 			os.Exit(1)
 		}
 		if !common.IsHexAddress(*createBlockchainAddress) {
-			log.Panic("ERROR: Invalid Ethereum address format")
+			log.Panic("ERROR: Invalid address format")
 		}
 		cli.createBlockchain(*createBlockchainAddress)
 	}
@@ -104,10 +104,10 @@ func (cli *CLI) Run() {
 			os.Exit(1)
 		}
 		if !common.IsHexAddress(*sendFrom) {
-			log.Panic("ERROR: Invalid source Ethereum address format")
+			log.Panic("ERROR: Invalid source address format")
 		}
 		if !common.IsHexAddress(*sendTo) {
-			log.Panic("ERROR: Invalid destination Ethereum address format")
+			log.Panic("ERROR: Invalid destination address format")
 		}
 		cli.send(*sendPrivateKey, *sendFrom, *sendTo, float32(*sendAmount), float32(*sendFee))
 	}

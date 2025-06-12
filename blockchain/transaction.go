@@ -36,7 +36,7 @@ type TXInput struct {
 
 // UsesKey checks whether the address initiated the transaction
 func (in *TXInput) UsesKey(address string) bool {
-	// Convert the input's public key to an Ethereum address
+	// Convert the input's public key to an address
 	pubKey, err := crypto.UnmarshalPubkey(in.PubKey)
 	if err != nil {
 		return false
@@ -48,7 +48,7 @@ func (in *TXInput) UsesKey(address string) bool {
 // TXOutput represents a transaction output
 type TXOutput struct {
 	Value   float32
-	Address string // Ethereum address
+	Address string // address
 }
 
 // NewCoinbaseTx creates a new coinbase transaction
@@ -57,13 +57,8 @@ func NewCoinbaseTx(to, data string, isGenesis bool, totalFees float32) *Transact
 		log.Panic("Invalid miner address")
 	}
 
-	// Set reward based on whether this is genesis block or not
-	var reward float32
-	if isGenesis {
-		reward = MINING_REWARD // 50 DYP for genesis block
-	} else {
-		reward = totalFees // Only transaction fees for regular mining
-	}
+	// Mining reward is always 50 DYP plus transaction fees
+	reward := MINING_REWARD + totalFees
 
 	txin := TXInput{[]byte{}, -1, nil, nil}
 	txout := NewTXOutput(reward, to)
@@ -190,7 +185,6 @@ func (tx *Transaction) Sign(privKey *ecdsa.PrivateKey, prevTXs map[string]Transa
 		txCopy.ID = txCopy.Hash()
 		txCopy.Vin[inID].PubKey = nil
 
-		// Sign the hash with Ethereum's signing method
 		dataHash := crypto.Keccak256Hash(txCopy.ID)
 		signature, err := crypto.Sign(dataHash.Bytes(), privKey)
 		if err != nil {

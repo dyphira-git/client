@@ -137,13 +137,29 @@ func NewBlockchain() *Blockchain {
 
 // AddBlock adds a mined block to the blockchain
 func (bc *Blockchain) AddBlock(block *Block, transactions []*Transaction) error {
-
 	err := bc.DB.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(blocksBucket))
 
+		// Check if block already exists
 		blockInDb := b.Get(block.Hash)
 		if blockInDb != nil {
 			return fmt.Errorf("block already exists")
+		}
+
+		// Get the current height
+		lastHash := b.Get([]byte("l"))
+		lastBlockData := b.Get(lastHash)
+		lastBlock := DeserializeBlock(lastBlockData)
+
+		// Verify block height is correct
+		expectedHeight := lastBlock.Height + 1
+		if block.Height != expectedHeight {
+			return fmt.Errorf("invalid block height: got %d, want %d", block.Height, expectedHeight)
+		}
+
+		// Verify block links to current tip
+		if !bytes.Equal(block.PrevBlockHash, lastHash) {
+			return fmt.Errorf("block does not link to current tip")
 		}
 
 		blockData := block.Serialize()
@@ -153,18 +169,12 @@ func (bc *Blockchain) AddBlock(block *Block, transactions []*Transaction) error 
 			return err
 		}
 
-		lastHash := b.Get([]byte("l"))
-		lastBlockData := b.Get(lastHash)
-		lastBlock := DeserializeBlock(lastBlockData)
-
-		if block.Height > lastBlock.Height {
-			err = b.Put([]byte("l"), block.Hash)
-			if err != nil {
-				log.Printf("Failed to update chain tip: %v", err)
-				return err
-			}
-			bc.tip = block.Hash
+		err = b.Put([]byte("l"), block.Hash)
+		if err != nil {
+			log.Printf("Failed to update chain tip: %v", err)
+			return err
 		}
+		bc.tip = block.Hash
 
 		return nil
 	})
@@ -427,11 +437,7 @@ func (bc *Blockchain) MineBlock(transactions []*Transaction) *Block {
 	}
 
 	newBlock := NewBlock(transactions, lastHash, lastHeight+1)
-	pow := NewProofOfWork(newBlock)
-	nonce, hash := pow.Run()
-
-	newBlock.Hash = hash
-	newBlock.Nonce = nonce
+	newBlock.MineBlock() // Mine the block
 
 	err = bc.DB.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(blocksBucket))

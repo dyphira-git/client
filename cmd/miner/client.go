@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -22,27 +23,40 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+// MiningClient handles the mining operations
 type MiningClient struct {
-	client pb.MiningServiceClient
-	conn   *grpc.ClientConn
+	client       pb.MiningServiceClient
+	minerAddress string
+	conn         *grpc.ClientConn
+	stopMining   chan struct{}
+	mu           sync.Mutex
+	isMining     bool
 }
 
+// NewMiningClient creates a new mining client
 func NewMiningClient(address string) (*MiningClient, error) {
 	conn, err := grpc.Dial(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect: %v", err)
 	}
 
-	client := pb.NewMiningServiceClient(conn)
 	return &MiningClient{
-		client: client,
-		conn:   conn,
+		client:       pb.NewMiningServiceClient(conn),
+		minerAddress: address,
+		conn:         conn,
+		stopMining:   make(chan struct{}),
 	}, nil
 }
 
-func (c *MiningClient) Close() {
-	if c.conn != nil {
-		c.conn.Close()
+// StopMining signals the mining operation to stop
+func (c *MiningClient) StopMining() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.isMining {
+		close(c.stopMining)
+		c.isMining = false
+		c.stopMining = make(chan struct{}) // Create new channel for next mining session
 	}
 }
 
@@ -70,33 +84,43 @@ func (c *MiningClient) performProofOfWork(block *pb.Block, difficulty int32) (in
 	hashesComputed := 0
 
 	for nonce < int32(maxNonce) {
-		data := prepareData(block, nonce)
-		hash := sha256.Sum256(data)
-		hashInt.SetBytes(hash[:])
+		select {
+		case <-c.stopMining:
+			log.Printf("[Miner] Mining operation cancelled")
+			return 0, nil
+		default:
+			data := prepareData(block, nonce, difficulty)
+			hash := sha256.Sum256(data)
+			hashInt.SetBytes(hash[:])
 
-		hashesComputed++
-		if hashesComputed%1000000 == 0 {
-			elapsed := time.Since(startTime)
-			hashrate := float64(hashesComputed) / elapsed.Seconds()
-			log.Printf("[Miner] Mining progress: Nonce=%d, Hashrate=%.2f H/s", nonce, hashrate)
+			hashesComputed++
+			if hashesComputed%1000000 == 0 {
+				// Check blockchain status to see if we should continue mining
+				status, err := c.client.GetBlockchainStatus(context.Background(), &pb.BlockchainStatusRequest{})
+				if err == nil && int(status.Height) >= int(block.Height) {
+					log.Printf("[Miner] Stopping mining - new block already found at height %d", status.Height)
+					return 0, nil
+				}
+
+			}
+
+			if hashInt.Cmp(target) == -1 {
+				elapsed := time.Since(startTime)
+				hashrate := float64(hashesComputed) / elapsed.Seconds()
+				log.Printf("[Miner] Found solution! Nonce=%d, Hash=%x, Time=%.2fs, Hashrate=%.2f H/s",
+					nonce, hash, elapsed.Seconds(), hashrate)
+				return nonce, hash[:]
+			}
+
+			nonce++
 		}
-
-		if hashInt.Cmp(target) == -1 {
-			elapsed := time.Since(startTime)
-			hashrate := float64(hashesComputed) / elapsed.Seconds()
-			log.Printf("[Miner] Found solution! Nonce=%d, Hash=%x, Time=%.2fs, Hashrate=%.2f H/s",
-				nonce, hash, elapsed.Seconds(), hashrate)
-			return nonce, hash[:]
-		}
-
-		nonce++
 	}
 	log.Printf("[Miner] Failed to find solution within nonce range")
 	return nonce, nil
 }
 
 // prepareData prepares block data for hashing
-func prepareData(block *pb.Block, nonce int32) []byte {
+func prepareData(block *pb.Block, nonce int32, difficulty int32) []byte {
 	// Hash transactions
 	var txHashes [][]byte
 	var txHash [32]byte
@@ -110,7 +134,7 @@ func prepareData(block *pb.Block, nonce int32) []byte {
 	binary.BigEndian.PutUint64(timestamp, uint64(block.Timestamp))
 
 	targetBits := make([]byte, 8)
-	binary.BigEndian.PutUint64(targetBits, uint64(16)) // Using constant targetBits=16
+	binary.BigEndian.PutUint64(targetBits, uint64(difficulty)) // Use dynamic difficulty from template
 
 	nonceBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(nonceBytes, uint64(nonce))
@@ -130,6 +154,7 @@ func prepareData(block *pb.Block, nonce int32) []byte {
 	return data
 }
 
+// StartMining starts the mining operation
 func (c *MiningClient) StartMining(minerAddress string) {
 	log.Printf("[Miner] Starting mining operations for address: %s", minerAddress)
 
@@ -141,12 +166,19 @@ func (c *MiningClient) StartMining(minerAddress string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	c.mu.Lock()
+	c.isMining = true
+	c.mu.Unlock()
+
 	// Start mining in a goroutine
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				log.Println("[Miner] Mining operations stopped")
+				return
+			case <-c.stopMining:
+				log.Println("[Miner] Mining operation cancelled")
 				return
 			default:
 				// Get blockchain status
@@ -159,38 +191,13 @@ func (c *MiningClient) StartMining(minerAddress string) {
 				log.Printf("[Miner] Current blockchain: Height=%d, Latest=%s, Difficulty=%d",
 					status.Height, status.LatestBlockHash, status.Difficulty)
 
-				// Get pending transactions count
-				pendingTxs, err := c.client.GetPendingTransactions(ctx, &pb.PendingTransactionsRequest{})
-				if err != nil {
-					log.Printf("[Miner] Failed to get pending transactions: %v", err)
-					time.Sleep(5 * time.Second)
-					continue
-				}
-
-				// Count non-coinbase transactions
-				realTxCount := 0
-				for _, tx := range pendingTxs.Transactions {
-					if tx.From != "coinbase" {
-						realTxCount++
-						log.Printf("[Miner] Found pending transaction: From=%s, To=%s, Amount=%f",
-							tx.From, tx.To, tx.Amount)
-					}
-				}
-
-				if realTxCount == 0 {
-					log.Printf("[Miner] No real transactions to mine, waiting for new transactions...")
-					time.Sleep(5 * time.Second)
-					continue
-				}
-				log.Printf("[Miner] Found %d real transactions ready for mining", realTxCount)
-
 				// Get block template
 				template, err := c.client.GetBlockTemplate(ctx, &pb.BlockTemplateRequest{
 					MinerAddress: minerAddress,
 				})
 				if err != nil {
-					if strings.Contains(err.Error(), "no transactions available") {
-						log.Printf("[Miner] Server reports no transactions available")
+					if strings.Contains(err.Error(), "block size exceeds maximum") {
+						log.Printf("[Miner] Block size exceeds maximum allowed size")
 						time.Sleep(5 * time.Second)
 						continue
 					}
@@ -213,7 +220,14 @@ func (c *MiningClient) StartMining(minerAddress string) {
 				// Perform proof of work locally
 				nonce, blockHash := c.performProofOfWork(template.Block, template.Difficulty)
 				if blockHash == nil {
-					log.Printf("[Miner] Mining attempt failed, retrying with new template")
+					log.Printf("[Miner] Mining attempt cancelled or failed, retrying with new template")
+					continue
+				}
+
+				// Check if the block height is still valid
+				currentStatus, err := c.client.GetBlockchainStatus(ctx, &pb.BlockchainStatusRequest{})
+				if err == nil && currentStatus.Height >= template.Block.Height {
+					log.Printf("[Miner] Block at height %d already exists, skipping submission", template.Block.Height)
 					continue
 				}
 
@@ -227,34 +241,37 @@ func (c *MiningClient) StartMining(minerAddress string) {
 					Nonce:     nonce,
 				}
 
-				resp, err := c.client.SubmitBlock(ctx, submitReq)
+				submitResp, err := c.client.SubmitBlock(ctx, submitReq)
 				if err != nil {
 					log.Printf("[Miner] Failed to submit block: %v", err)
-					time.Sleep(5 * time.Second)
 					continue
 				}
 
-				if resp.Success {
-					log.Printf("[Miner] Block accepted by network: Hash=%s", resp.BlockHash)
-					// Add a delay after successful mining to allow the network to sync
-					time.Sleep(2 * time.Second)
-				} else {
-					log.Printf("[Miner] Block rejected: %s", resp.ErrorMessage)
-					if strings.Contains(resp.ErrorMessage, "invalid proof of work") {
-						log.Printf("[Miner] Invalid proof of work, retrying with new template")
-						continue
-					}
+				if !submitResp.Success {
+					log.Printf("[Miner] Block submission failed: %s", submitResp.ErrorMessage)
+					continue
 				}
 
-				// Small delay between mining attempts
-				time.Sleep(1 * time.Second)
+				log.Printf("[Miner] Successfully submitted block")
 			}
 		}
 	}()
 
 	// Wait for interrupt signal
 	<-stop
-	log.Printf("[Miner] Received shutdown signal, cleaning up...")
+	log.Println("[Miner] Received interrupt signal, shutting down...")
+
+	// Stop mining
+	c.StopMining()
+
 	cancel()
 	time.Sleep(1 * time.Second) // Give a moment for cleanup
+}
+
+// Close closes the client connection
+func (c *MiningClient) Close() error {
+	if c.conn != nil {
+		return c.conn.Close()
+	}
+	return nil
 }

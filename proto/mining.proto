@@ -18,7 +18,7 @@ service MiningService {
 
 // Request for a block template
 message BlockTemplateRequest {
-  string miner_address = 1; // Ethereum address
+  string miner_address = 1;
 }
 
 // Block data structure
@@ -51,8 +51,8 @@ message SubmitBlockResponse {
 
 // Transaction data
 message Transaction {
-  string from = 1;      // Ethereum address
-  string to = 2;        // Ethereum address
+  string from = 1;
+  string to = 2;
   float amount = 3;
   float fee = 4;       // Transaction fee
   bytes signature = 5;
@@ -72,7 +72,7 @@ message TXInput {
 // Transaction Output
 message TXOutput {
   float value = 1;
-  string address = 2;   // Ethereum address
+  string address = 2;
 }
 
 // Request to get blockchain status

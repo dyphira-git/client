@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"log"
@@ -92,8 +93,190 @@ type AllTransactionsResponse struct {
 	Transactions []TransactionResponse `json:"transactions"`
 }
 
+// BlockResponse represents a single block in the response
+type BlockResponse struct {
+	Height        int                   `json:"height"`
+	Hash          string                `json:"hash"`
+	PrevBlockHash string                `json:"prevBlockHash"`
+	Timestamp     int64                 `json:"timestamp"`
+	Nonce         int                   `json:"nonce"`
+	Transactions  []TransactionResponse `json:"transactions"`
+}
+
+// BlockListResponse represents the response structure for all blocks
+type BlockListResponse struct {
+	Blocks []BlockResponse `json:"blocks"`
+}
+
 func NewServer(port string, bc *blockchain.Blockchain) *Server {
 	return &Server{port: port, bc: bc}
+}
+
+// GetAllTransactions returns all transactions in the blockchain
+func (s *Server) getAllTransactions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	bci := s.bc.Iterator()
+	response := AllTransactionsResponse{
+		Transactions: make([]TransactionResponse, 0),
+	}
+
+	for {
+		block := bci.Next()
+
+		for _, tx := range block.Transactions {
+			txType := "transfer"
+			if tx.IsCoinbase() {
+				txType = "mining_reward"
+			}
+
+			response.Transactions = append(response.Transactions, TransactionResponse{
+				TxID:        hex.EncodeToString(tx.ID),
+				From:        tx.From,
+				To:          tx.To,
+				Amount:      tx.Amount,
+				BlockHeight: block.Height,    // Include block height
+				Timestamp:   block.Timestamp, // Include block timestamp
+				Type:        txType,
+			})
+		}
+
+		if len(block.PrevBlockHash) == 0 {
+			break
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// GetAllBlocks returns all blocks in the blockchain
+func (s *Server) getAllBlocks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	bci := s.bc.Iterator()
+	response := BlockListResponse{
+		Blocks: make([]BlockResponse, 0),
+	}
+
+	for {
+		block := bci.Next()
+
+		// Convert transactions
+		txResponses := make([]TransactionResponse, len(block.Transactions))
+		for i, tx := range block.Transactions {
+			txType := "transfer"
+			if tx.IsCoinbase() {
+				txType = "mining_reward"
+			}
+
+			txResponses[i] = TransactionResponse{
+				TxID:        hex.EncodeToString(tx.ID),
+				From:        tx.From,
+				To:          tx.To,
+				Amount:      tx.Amount,
+				BlockHeight: block.Height,
+				Timestamp:   block.Timestamp,
+				Type:        txType,
+			}
+		}
+
+		blockResponse := BlockResponse{
+			Height:        block.Height,
+			Hash:          hex.EncodeToString(block.Hash),
+			PrevBlockHash: hex.EncodeToString(block.PrevBlockHash),
+			Timestamp:     block.Timestamp,
+			Nonce:         block.Nonce,
+			Transactions:  txResponses,
+		}
+
+		response.Blocks = append(response.Blocks, blockResponse)
+
+		if len(block.PrevBlockHash) == 0 {
+			break
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// GetSpecificBlock returns a specific block by hash
+func (s *Server) getSpecificBlock(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get block hash from URL
+	blockHash := r.URL.Path[len("/block/"):]
+	if blockHash == "" {
+		http.Error(w, "Block hash is required", http.StatusBadRequest)
+		return
+	}
+
+	// Decode hex string to bytes
+	hash, err := hex.DecodeString(blockHash)
+	if err != nil {
+		http.Error(w, "Invalid block hash format", http.StatusBadRequest)
+		return
+	}
+
+	// Find the block
+	var foundBlock *blockchain.Block
+	bci := s.bc.Iterator()
+	for {
+		block := bci.Next()
+		if bytes.Equal(block.Hash, hash) {
+			foundBlock = block
+			break
+		}
+		if len(block.PrevBlockHash) == 0 {
+			break
+		}
+	}
+
+	if foundBlock == nil {
+		http.Error(w, "Block not found", http.StatusNotFound)
+		return
+	}
+
+	// Convert transactions
+	txResponses := make([]TransactionResponse, len(foundBlock.Transactions))
+	for i, tx := range foundBlock.Transactions {
+		txType := "transfer"
+		if tx.IsCoinbase() {
+			txType = "mining_reward"
+		}
+
+		txResponses[i] = TransactionResponse{
+			TxID:        hex.EncodeToString(tx.ID),
+			From:        tx.From,
+			To:          tx.To,
+			Amount:      tx.Amount,
+			BlockHeight: foundBlock.Height,
+			Timestamp:   foundBlock.Timestamp,
+			Type:        txType,
+		}
+	}
+
+	blockResponse := BlockResponse{
+		Height:        foundBlock.Height,
+		Hash:          hex.EncodeToString(foundBlock.Hash),
+		PrevBlockHash: hex.EncodeToString(foundBlock.PrevBlockHash),
+		Timestamp:     foundBlock.Timestamp,
+		Nonce:         foundBlock.Nonce,
+		Transactions:  txResponses,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(blockResponse)
 }
 
 func (s *Server) Start() {
@@ -116,7 +299,7 @@ func (s *Server) Start() {
 		}
 
 		if !common.IsHexAddress(address) {
-			http.Error(w, "Invalid Ethereum address format", http.StatusBadRequest)
+			http.Error(w, "Invalid address format", http.StatusBadRequest)
 			return
 		}
 
@@ -130,34 +313,7 @@ func (s *Server) Start() {
 	}))
 
 	// Get all transactions
-	mux.HandleFunc("/transactions", enableCORS(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		transactions := s.bc.GetAllTransactions()
-		response := AllTransactionsResponse{
-			Transactions: make([]TransactionResponse, len(transactions)),
-		}
-
-		for i, tx := range transactions {
-			txType := "transfer"
-			if tx.IsCoinbase() {
-				txType = "mining_reward"
-			}
-
-			response.Transactions[i] = TransactionResponse{
-				TxID:   hex.EncodeToString(tx.ID),
-				From:   tx.From,
-				To:     tx.To,
-				Amount: tx.Amount,
-				Type:   txType,
-			}
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-	}))
+	mux.HandleFunc("/transactions", enableCORS(s.getAllTransactions))
 
 	// Get transaction history
 	mux.HandleFunc("/history/", enableCORS(func(w http.ResponseWriter, r *http.Request) {
@@ -176,7 +332,7 @@ func (s *Server) Start() {
 		}
 
 		if !common.IsHexAddress(address) {
-			http.Error(w, "Invalid Ethereum address format", http.StatusBadRequest)
+			http.Error(w, "Invalid address format", http.StatusBadRequest)
 			return
 		}
 
@@ -192,6 +348,12 @@ func (s *Server) Start() {
 			History: history,
 		})
 	}))
+
+	// Get all blocks
+	mux.HandleFunc("/blocks", enableCORS(s.getAllBlocks))
+
+	// Get specific block by hash
+	mux.HandleFunc("/block/", enableCORS(s.getSpecificBlock))
 
 	// Send transaction
 	mux.HandleFunc("/transaction", enableCORS(func(w http.ResponseWriter, r *http.Request) {
@@ -223,7 +385,7 @@ func (s *Server) Start() {
 		}
 
 		if !common.IsHexAddress(req.ToAddress) {
-			http.Error(w, "Invalid destination Ethereum address format", http.StatusBadRequest)
+			http.Error(w, "Invalid destination address format", http.StatusBadRequest)
 			return
 		}
 

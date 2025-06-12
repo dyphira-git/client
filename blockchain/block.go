@@ -17,7 +17,7 @@ type Block struct {
 	Height        int
 }
 
-// NewBlock creates and returns a new Block
+// NewBlock creates and returns a new Block without mining
 func NewBlock(transactions []*Transaction, prevBlockHash []byte, height int) *Block {
 	block := &Block{
 		Timestamp:     time.Now().Unix(),
@@ -27,19 +27,22 @@ func NewBlock(transactions []*Transaction, prevBlockHash []byte, height int) *Bl
 		Nonce:         0,
 		Height:        height,
 	}
-
-	pow := NewProofOfWork(block)
-	nonce, hash := pow.Run()
-
-	block.Hash = hash[:]
-	block.Nonce = nonce
-
 	return block
+}
+
+// MineBlock performs proof of work on the block
+func (b *Block) MineBlock() {
+	pow := NewProofOfWork(b)
+	nonce, hash := pow.Run()
+	b.Hash = hash[:]
+	b.Nonce = nonce
 }
 
 // NewGenesisBlock creates and returns genesis Block
 func NewGenesisBlock(coinbase *Transaction) *Block {
-	return NewBlock([]*Transaction{coinbase}, []byte{}, 0)
+	block := NewBlock([]*Transaction{coinbase}, []byte{}, 0)
+	block.MineBlock() // Genesis block still needs to be mined
+	return block
 }
 
 // HashTransactions returns a hash of the transactions in the block

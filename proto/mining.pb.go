@@ -24,7 +24,7 @@ const (
 // Request for a block template
 type BlockTemplateRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	MinerAddress  string                 `protobuf:"bytes,1,opt,name=miner_address,json=minerAddress,proto3" json:"miner_address,omitempty"` // Ethereum address
+	MinerAddress  string                 `protobuf:"bytes,1,opt,name=miner_address,json=minerAddress,proto3" json:"miner_address,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -313,8 +313,8 @@ func (x *SubmitBlockResponse) GetErrorMessage() string {
 // Transaction data
 type Transaction struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	From          string                 `protobuf:"bytes,1,opt,name=from,proto3" json:"from,omitempty"` // Ethereum address
-	To            string                 `protobuf:"bytes,2,opt,name=to,proto3" json:"to,omitempty"`     // Ethereum address
+	From          string                 `protobuf:"bytes,1,opt,name=from,proto3" json:"from,omitempty"`
+	To            string                 `protobuf:"bytes,2,opt,name=to,proto3" json:"to,omitempty"`
 	Amount        float32                `protobuf:"fixed32,3,opt,name=amount,proto3" json:"amount,omitempty"`
 	Fee           float32                `protobuf:"fixed32,4,opt,name=fee,proto3" json:"fee,omitempty"` // Transaction fee
 	Signature     []byte                 `protobuf:"bytes,5,opt,name=signature,proto3" json:"signature,omitempty"`
@@ -484,7 +484,7 @@ func (x *TXInput) GetPubKey() []byte {
 type TXOutput struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Value         float32                `protobuf:"fixed32,1,opt,name=value,proto3" json:"value,omitempty"`
-	Address       string                 `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"` // Ethereum address
+	Address       string                 `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }

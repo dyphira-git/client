@@ -43,7 +43,7 @@ func main() {
 	}
 
 	s := grpc.NewServer()
-	pb.RegisterMiningServiceServer(s, newMiningServer(bc))
+	pb.RegisterMiningServiceServer(s, NewMiningServer(bc))
 
 	log.Printf("Mining server listening at %v", lis.Addr())
 	if err := s.Serve(lis); err != nil {

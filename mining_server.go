@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"sort"
 	"sync"
 	"time"
 
@@ -19,14 +20,42 @@ const blocksBucket = "blocks"
 
 type miningServer struct {
 	pb.UnimplementedMiningServiceServer
-	blockchain *blockchain.Blockchain
-	mu         sync.Mutex
+	blockchain  *blockchain.Blockchain
+	mu          sync.Mutex
+	lastAdjTime time.Time
 }
 
-func newMiningServer(bc *blockchain.Blockchain) *miningServer {
+// NewMiningServer creates a new mining server instance
+func NewMiningServer(bc *blockchain.Blockchain) *miningServer {
 	return &miningServer{
-		blockchain: bc,
+		blockchain:  bc,
+		lastAdjTime: time.Now(),
 	}
+}
+
+// calculateBlockSize calculates the approximate size of a block in bytes
+func calculateBlockSize(block *blockchain.Block) int {
+	size := 0
+	// Add fixed block header size (timestamp, prevBlockHash, hash, nonce, height)
+	size += 8 + len(block.PrevBlockHash) + len(block.Hash) + 4 + 4
+
+	// Add transaction sizes
+	for _, tx := range block.Transactions {
+		// Add fixed transaction fields
+		size += len(tx.ID) + len(tx.From) + len(tx.To) + 8 + 8 + len(tx.Signature)
+
+		// Add inputs
+		for _, in := range tx.Vin {
+			size += len(in.Txid) + 4 + len(in.Signature) + len(in.PubKey)
+		}
+
+		// Add outputs
+		for _, out := range tx.Vout {
+			size += 4 + len(out.Address)
+		}
+	}
+
+	return size
 }
 
 // GetBlockTemplate prepares a new block template for mining
@@ -44,29 +73,68 @@ func (s *miningServer) GetBlockTemplate(ctx context.Context, req *pb.BlockTempla
 	pendingTxs := s.blockchain.GetPendingTransactions()
 	log.Printf("[Server] Found %d total transactions in mempool", len(pendingTxs))
 
-	// Check if there are any non-coinbase transactions
-	hasRealTransactions := false
-	realTxCount := 0
-	totalFees := float32(0)
+	// Create a slice of transactions with their sizes and fees for sorting
+	type txWithMetadata struct {
+		tx   *blockchain.Transaction
+		size int
+		fee  float32
+	}
+
+	var txsMetadata []txWithMetadata
+
+	// Calculate size and fee for each transaction
 	for _, tx := range pendingTxs {
 		if !tx.IsCoinbase() {
-			hasRealTransactions = true
-			realTxCount++
-			totalFees += tx.Fee
-			log.Printf("[Server] Found real transaction: From=%s, To=%s, Amount=%f, Fee=%f", tx.From, tx.To, tx.Amount, tx.Fee)
+			// Calculate transaction size
+			size := len(tx.ID) + len(tx.From) + len(tx.To) + 8 + 8 + len(tx.Signature)
+			for _, in := range tx.Vin {
+				size += len(in.Txid) + 4 + len(in.Signature) + len(in.PubKey)
+			}
+			for _, out := range tx.Vout {
+				size += 4 + len(out.Address)
+			}
+
+			txsMetadata = append(txsMetadata, txWithMetadata{
+				tx:   tx,
+				size: size,
+				fee:  tx.Fee,
+			})
 		}
 	}
 
-	if !hasRealTransactions {
-		log.Printf("[Server] No real transactions found in mempool")
-		return nil, fmt.Errorf("no transactions available for mining")
+	// Sort transactions by fee per byte (descending) to maximize reward/size ratio
+	sort.Slice(txsMetadata, func(i, j int) bool {
+		feePerByteI := float64(txsMetadata[i].fee) / float64(txsMetadata[i].size)
+		feePerByteJ := float64(txsMetadata[j].fee) / float64(txsMetadata[j].size)
+		return feePerByteI > feePerByteJ
+	})
+
+	// Select transactions while respecting block size limit
+	var selectedTxs []*blockchain.Transaction
+	totalSize := 0
+	totalFees := float32(0)
+	realTxCount := 0
+
+	// Reserve space for block header and coinbase transaction
+	headerSize := 8 + 32 + 32 + 4 + 4 // timestamp + prevBlockHash + hash + nonce + height
+	coinbaseSize := 100               // Approximate size for coinbase transaction
+	remainingSize := blockchain.MaxBlockSize - headerSize - coinbaseSize
+
+	// Select transactions that fit in the block
+	for _, txMeta := range txsMetadata {
+		if totalSize+txMeta.size <= remainingSize {
+			selectedTxs = append(selectedTxs, txMeta.tx)
+			totalSize += txMeta.size
+			totalFees += txMeta.tx.Fee
+			realTxCount++
+			log.Printf("[Server] Selected transaction: From=%s, To=%s, Amount=%f, Fee=%f, Size=%d",
+				txMeta.tx.From, txMeta.tx.To, txMeta.tx.Amount, txMeta.tx.Fee, txMeta.size)
+		}
 	}
-	log.Printf("[Server] Found %d real transactions to mine, total fees: %f", realTxCount, totalFees)
 
-	transactions := make([]*blockchain.Transaction, len(pendingTxs))
-	copy(transactions, pendingTxs)
+	log.Printf("[Server] Selected %d transactions with total fees: %f", realTxCount, totalFees)
 
-	// Check if this is genesis block by checking if any blocks exist
+	// Check if this is genesis block
 	var isGenesis bool
 	err := s.blockchain.DB.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(blocksBucket))
@@ -85,16 +153,32 @@ func (s *miningServer) GetBlockTemplate(ctx context.Context, req *pb.BlockTempla
 
 	// Add mining reward transaction
 	reward := blockchain.NewCoinbaseTx(req.MinerAddress, "Mining reward", isGenesis, totalFees)
-	transactions = append(transactions, reward)
-	if isGenesis {
-		log.Printf("[Server] Added genesis coinbase reward transaction for miner: %s, reward: %f DYP", req.MinerAddress, reward.Amount)
-	} else {
-		log.Printf("[Server] Added coinbase transaction with fees for miner: %s, fees: %f", req.MinerAddress, reward.Amount)
-	}
+	selectedTxs = append(selectedTxs, reward)
 
 	// Create a block template
-	block := s.blockchain.PrepareNewBlock(transactions)
-	log.Printf("[Server] Prepared block template: Height=%d, PrevHash=%x", block.Height, block.PrevBlockHash)
+	block := s.blockchain.PrepareNewBlock(selectedTxs)
+
+	// Double check final block size
+	blockSize := calculateBlockSize(block)
+	if blockSize > blockchain.MaxBlockSize {
+		log.Printf("[Server] Block size %d exceeds maximum %d bytes", blockSize, blockchain.MaxBlockSize)
+		return nil, fmt.Errorf("block size exceeds maximum allowed size")
+	}
+
+	// Adjust difficulty if needed
+	lastBlock := s.blockchain.GetLastBlock()
+	if lastBlock != nil && !isGenesis {
+		if block.Height%blockchain.DifficultyAdjustmentInterval == 0 {
+			actualTimespan := time.Since(s.lastAdjTime)
+			newDifficulty := blockchain.CalculateNextDifficulty(blockchain.GetTargetBits(), actualTimespan)
+			blockchain.SetDifficulty(newDifficulty)
+			s.lastAdjTime = time.Now()
+			log.Printf("[Server] Adjusted difficulty to %d", newDifficulty)
+		}
+	}
+
+	log.Printf("[Server] Prepared block template: Height=%d, PrevHash=%x, Size=%d bytes",
+		block.Height, block.PrevBlockHash, blockSize)
 
 	// Convert block to protobuf format
 	pbBlock := &pb.Block{
@@ -117,13 +201,13 @@ func (s *miningServer) GetBlockTemplate(ctx context.Context, req *pb.BlockTempla
 			Vout:          make([]*pb.TXOutput, len(tx.Vout)),
 		}
 
-		// Convert Vin and Vout to protobuf format
 		if tx.IsCoinbase() {
-			// For coinbase transactions, we already have the basic fields set
 			if isGenesis {
-				log.Printf("[Server] Converting genesis coinbase transaction for miner: %s, Amount=%f DYP", tx.To, tx.Amount)
+				log.Printf("[Server] Converting genesis coinbase transaction for miner: %s, Amount=%f DYP (50 DYP + %f fees)",
+					tx.To, tx.Amount, totalFees)
 			} else {
-				log.Printf("[Server] Converting coinbase transaction with fees for miner: %s, Amount=%f", tx.To, tx.Amount)
+				log.Printf("[Server] Converting coinbase transaction for miner: %s, Amount=%f DYP (50 DYP + %f fees)",
+					tx.To, tx.Amount, totalFees)
 			}
 			pbTx.Vin = []*pb.TXInput{
 				{
@@ -140,10 +224,6 @@ func (s *miningServer) GetBlockTemplate(ctx context.Context, req *pb.BlockTempla
 				},
 			}
 		} else {
-			// For regular transactions, include Vin and Vout
-			log.Printf("[Server] Converting regular transaction: From=%s, To=%s, Amount=%f, Fee=%f", tx.From, tx.To, tx.Amount, tx.Fee)
-
-			// Convert inputs
 			for j, vin := range tx.Vin {
 				pbTx.Vin[j] = &pb.TXInput{
 					Txid:      vin.Txid,
@@ -151,23 +231,17 @@ func (s *miningServer) GetBlockTemplate(ctx context.Context, req *pb.BlockTempla
 					Signature: vin.Signature,
 					PubKey:    vin.PubKey,
 				}
-				log.Printf("[Server] Input %d: TxID=%x, Vout=%d", j, vin.Txid, vin.Vout)
 			}
-
-			// Convert outputs
 			for j, vout := range tx.Vout {
 				pbTx.Vout[j] = &pb.TXOutput{
 					Value:   vout.Value,
 					Address: vout.Address,
 				}
-				log.Printf("[Server] Output %d: Value=%f", j, vout.Value)
 			}
 		}
-
 		pbBlock.Transactions[i] = pbTx
 	}
 
-	log.Printf("[Server] Sending block template with %d total transactions", len(pbBlock.Transactions))
 	return &pb.BlockTemplateResponse{
 		Block:      pbBlock,
 		Difficulty: int32(blockchain.GetTargetBits()),
@@ -187,7 +261,6 @@ func (s *miningServer) SubmitBlock(ctx context.Context, req *pb.SubmitBlockReque
 	totalFees := float32(0)
 
 	for i, tx := range req.Block.Transactions {
-		// Create a new transaction with proper Vin and Vout
 		transactions[i] = &blockchain.Transaction{
 			ID:        tx.TransactionId,
 			From:      tx.From,
@@ -223,22 +296,18 @@ func (s *miningServer) SubmitBlock(ctx context.Context, req *pb.SubmitBlockReque
 			realTxCount++
 			totalFees += tx.Fee
 			log.Printf("[Server] Processing regular transaction: From=%s, To=%s, Amount=%f, Fee=%f", tx.From, tx.To, tx.Amount, tx.Fee)
-			log.Printf("[Server] Transaction has %d inputs and %d outputs", len(tx.Vin), len(tx.Vout))
 		}
 	}
 	log.Printf("[Server] Block contains %d real transactions and 1 coinbase transaction, total fees: %f", realTxCount, totalFees)
 
-	// Get the current height from the blockchain
-	currentHeight := s.blockchain.GetHeight()
-	newHeight := currentHeight + 1
-
+	// Create the block without mining it
 	block := &blockchain.Block{
-		Timestamp:     time.Now().Unix(), // Set current timestamp
+		Timestamp:     req.Block.Timestamp,
 		Transactions:  transactions,
 		PrevBlockHash: req.Block.PrevBlockHash,
 		Hash:          req.BlockHash,
 		Nonce:         int(req.Nonce),
-		Height:        newHeight, // Set proper height
+		Height:        int(req.Block.Height),
 	}
 
 	// Verify the proof of work
@@ -290,24 +359,19 @@ func (s *miningServer) GetPendingTransactions(ctx context.Context, req *pb.Pendi
 	defer s.mu.Unlock()
 
 	pendingTxs := s.blockchain.GetPendingTransactions()
-	log.Printf("[Server] Getting pending transactions, found %d total", len(pendingTxs))
-
 	pbTxs := make([]*pb.Transaction, len(pendingTxs))
-	realTxCount := 0
+
 	for i, tx := range pendingTxs {
-		pbTxs[i] = &pb.Transaction{
+		pbTx := &pb.Transaction{
 			From:          tx.From,
 			To:            tx.To,
 			Amount:        tx.Amount,
+			Fee:           tx.Fee,
 			TransactionId: tx.ID,
 			Signature:     tx.Signature,
 		}
-		if tx.From != "coinbase" {
-			realTxCount++
-			log.Printf("[Server] Pending transaction %d: From=%s, To=%s, Amount=%f", i, tx.From, tx.To, tx.Amount)
-		}
+		pbTxs[i] = pbTx
 	}
-	log.Printf("[Server] Returning %d real transactions from mempool", realTxCount)
 
 	return &pb.PendingTransactionsResponse{
 		Transactions: pbTxs,

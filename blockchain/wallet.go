@@ -10,7 +10,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
-// Wallet stores private and public keys for Ethereum-style addresses
+// Wallet stores private and public keys for addresses
 type Wallet struct {
 	PrivateKey *ecdsa.PrivateKey
 	PublicKey  []byte
@@ -38,7 +38,7 @@ func NewWalletFromPrivateKey(privateKeyHex string) (*Wallet, error) {
 	// Get public key bytes
 	publicKeyBytes := crypto.FromECDSAPub(publicKeyECDSA)
 
-	// Get Ethereum address
+	// Get address
 	address := crypto.PubkeyToAddress(*publicKeyECDSA)
 
 	wallet := &Wallet{
@@ -50,7 +50,7 @@ func NewWalletFromPrivateKey(privateKeyHex string) (*Wallet, error) {
 	return wallet, nil
 }
 
-// GetAddress returns the wallet's Ethereum address as a hex string with 0x prefix
+// GetAddress returns the wallet's address as a hex string with 0x prefix
 func (w *Wallet) GetAddress() string {
 	return w.Address.Hex()
 }
@@ -60,7 +60,7 @@ func (w *Wallet) GetPrivateKey() string {
 	return "0x" + hex.EncodeToString(crypto.FromECDSA(w.PrivateKey))
 }
 
-// ValidateAddress checks if the given address is a valid Ethereum address
+// ValidateAddress checks if the given address is a valid address
 func ValidateAddress(address string) bool {
 	return common.IsHexAddress(address)
 }
