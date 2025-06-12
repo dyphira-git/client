@@ -22,7 +22,7 @@ const (
 	MinDifficulty = 1
 
 	// MaxDifficulty is the maximum difficulty allowed
-	MaxDifficulty = 32
+	MaxDifficulty = 64
 
 	// MaxTimeDeviation is the maximum time difference allowed between blocks
 	MaxTimeDeviation = 2 * time.Hour

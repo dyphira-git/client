@@ -33,7 +33,10 @@ func main() {
 	}
 
 	go func() {
-		server := api.NewServer("8080", bc)
+		server, err := api.NewServer("8080", bc)
+		if err != nil {
+			log.Fatalf("failed to create server: %v", err)
+		}
 		server.Start()
 	}()
 
